@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenMetadata Governance Portal"
+  short_description: "Build secure OpenMetadata governance portals"
+  default_prompt: "Use $openmetadata-governance-portal to implement this portal change with OpenMetadata as the authorization source of truth."
