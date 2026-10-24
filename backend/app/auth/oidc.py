@@ -33,6 +33,11 @@ class OidcClient:
             "code_challenge": challenge,
             "code_challenge_method": "S256",
         }
+        # A portal logout clears only this application's session. Keep the IdP's
+        # session intact, but ask it to show its account chooser on the next
+        # login so the user can select another Google account.
+        if self.settings.oidc_login_prompt:
+            query["prompt"] = self.settings.oidc_login_prompt
         # Google OIDC (and many standards-compliant providers) derives the ID-token
         # audience from client_id. Sending a generic `audience` request parameter
         # causes Google's `invalid_audience` error. Keep audience validation during

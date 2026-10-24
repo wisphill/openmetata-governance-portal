@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     oidc_client_id: str
     oidc_client_secret: str | None = None
     oidc_scopes: str = "openid profile email"
+    # `select_account` lets a user deliberately choose a different SSO account
+    # after ending a portal session without signing them out of Google globally.
+    oidc_login_prompt: str | None = "select_account"
     oidc_audience: str | None = None
     oidc_redirect_uri: AnyHttpUrl
     oidc_logout_uri: str | None = None

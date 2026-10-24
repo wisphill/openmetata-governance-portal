@@ -22,5 +22,9 @@ run:
 	test -f "$(ENV_FILE)"
 	$(CONTAINER_ENGINE) run --rm --env-file "$(ENV_FILE)" --publish "$(PORT):8000" "$(IMAGE):$(TAG)"
 
+temp-run:
+	.venv311/bin/pip install -e '.[dev]'
+	.venv311/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+
 push:
 	$(CONTAINER_ENGINE) push "$(IMAGE):$(TAG)"
