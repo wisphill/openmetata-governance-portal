@@ -3,14 +3,16 @@ from app.openmetadata.client import OpenMetadataClient
 
 
 class OpenMetadataAuthorizationService:
-    def __init__(self, client: OpenMetadataClient, email: str | None) -> None:
+    def __init__(self, client: OpenMetadataClient, email: str | None, username: str | None = None) -> None:
         self.client = client
         self.email = email
+        self.username = username
 
     async def get_current_user(self) -> MeResponse:
-        if not self.email:
+        lookup_value = self._lookup_value()
+        if not lookup_value:
             raise PermissionError("The OIDC token has no configured user mapping claim")
-        user = await self._find_user_by_email(self.email)
+        user = await self._find_user(lookup_value)
         if not user or user.get("isActive", True) is False:
             raise PermissionError("No active OpenMetadata user is mapped to this OIDC identity")
         user = await self.client.get(f"/users/{user['id']}", {"fields": "teams,roles,profile"})
@@ -57,10 +59,18 @@ class OpenMetadataAuthorizationService:
                     policies.append(policy)
         return policies
 
-    async def _find_user_by_email(self, email: str) -> dict | None:
-        """Use OM's cursor pagination because its Users list API has no email filter."""
+    def _lookup_value(self) -> str | None:
+        if self.client.settings.openmetadata_user_lookup_field == "email":
+            return self.email
+        # Google commonly does not issue `preferred_username`; OpenMetadata
+        # installations often use the email local part as their user name.
+        return self.username or (self.email.split("@", 1)[0] if self.email else None)
+
+    async def _find_user(self, value: str) -> dict | None:
+        """Use OM's cursor pagination because its Users list API has no identity filter."""
         cursor: str | None = None
-        target = email.casefold()
+        field = self.client.settings.openmetadata_user_lookup_field
+        target = value.casefold()
         for _ in range(self.client.settings.openmetadata_user_lookup_max_pages):
             params = {
                 "limit": self.client.settings.openmetadata_user_lookup_page_size,
@@ -71,7 +81,7 @@ class OpenMetadataAuthorizationService:
             if cursor:
                 params["after"] = cursor
             payload = await self.client.get("/users", params)
-            user = next((item for item in payload.get("data", []) if item.get("email", "").casefold() == target), None)
+            user = next((item for item in payload.get("data", []) if str(item.get(field, "")).casefold() == target), None)
             if user:
                 return user
             cursor = payload.get("paging", {}).get("after")

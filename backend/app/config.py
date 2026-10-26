@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     oidc_redirect_uri: AnyHttpUrl
     oidc_logout_uri: str | None = None
     oidc_email_claim: str = "email"
+    # Used only when matching OpenMetadata users by their `name` field. If the
+    # IdP does not issue it, the email local part is used as a safe fallback.
+    oidc_username_claim: str | None = "preferred_username"
     openmetadata_base_url: AnyHttpUrl
     om_admin_bot_token: str = Field(min_length=1)
     openmetadata_api_version: str = "v1"
@@ -33,6 +36,13 @@ class Settings(BaseSettings):
     openmetadata_user_lookup_page_size: int = Field(default=100, ge=1, le=1000)
     openmetadata_user_lookup_max_pages: int = Field(default=100, ge=1, le=1000)
     openmetadata_tasks_path: str = "/feed"
+    openmetadata_task_scan_max_pages: int = Field(default=100, ge=1, le=1000)
+    # The task endpoint and task type are deployment-version dependent. Keep
+    # them server-side rather than exposing OpenMetadata's task shape to users.
+    openmetadata_access_request_task_path: str = "/tasks"
+    openmetadata_access_request_task_type: str = "DataAccessRequest"
+    openmetadata_access_request_expiration_days: int = Field(default=30, ge=1, le=365)
+    openmetadata_catalog_page_size: int = Field(default=20, ge=1, le=100)
     openmetadata_timeout_seconds: float = 10
     database_queries_enabled: bool = False
     oracle_dsn: str | None = None

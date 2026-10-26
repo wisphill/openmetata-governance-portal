@@ -8,8 +8,10 @@ from app.auth.oidc import OidcClient
 from app.auth.session import Session
 from app.config import Settings, get_settings
 from app.database.oracle import OracleAdapter
-from app.models.contracts import MeResponse, QueryRequest, TaskPage
+from app.models.contracts import AccessRequestCreate, AccessRequestCreated, CatalogPage, CatalogTable, MeResponse, QueryRequest, TaskPage
+from app.openmetadata.access_requests import OpenMetadataAccessRequestService
 from app.openmetadata.authorization import OpenMetadataAuthorizationService
+from app.openmetadata.catalog import OpenMetadataCatalogService
 from app.openmetadata.client import OpenMetadataClient
 from app.openmetadata.tasks import OpenMetadataTaskService
 
@@ -48,7 +50,8 @@ async def callback(request: Request, code: str, state: str, settings: SettingsDe
     email = claims.get(settings.oidc_email_claim)
     client = OpenMetadataClient(settings)
     try:
-        await OpenMetadataAuthorizationService(client, email).get_current_user()
+        username = claims.get(settings.oidc_username_claim) if settings.oidc_username_claim else None
+        await OpenMetadataAuthorizationService(client, email, username).get_current_user()
     except PermissionError:
         request.app.state.sessions.delete(request.cookies.get("portal_session"))
         response = RedirectResponse(f"{settings.portal_public_url.rstrip('/')}/access-denied", status_code=status.HTTP_303_SEE_OTHER)
@@ -73,9 +76,10 @@ async def health():
 
 async def authorization_service(session: SessionDep, settings: SettingsDep):
     email = session.claims.get(settings.oidc_email_claim)
+    username = session.claims.get(settings.oidc_username_claim) if settings.oidc_username_claim else None
     client = OpenMetadataClient(settings)
     try:
-        yield OpenMetadataAuthorizationService(client, email)
+        yield OpenMetadataAuthorizationService(client, email, username)
     finally:
         await client.close()
 
@@ -122,12 +126,76 @@ async def tasks(
         await client.close()
 
 
+@router.get("/api/catalog/tables", response_model=CatalogPage)
+async def catalog_tables(
+    authz: AuthzDep,
+    settings: SettingsDep,
+    after: str | None = Query(None, max_length=512),
+    page_size: int | None = Query(None, ge=1, le=100),
+):
+    # Resolve the authenticated OpenMetadata identity first. This keeps the
+    # bot-token catalogue read behind the same admission boundary as all BFF APIs.
+    try:
+        await authz.get_current_user()
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
+    client = OpenMetadataClient(settings)
+    try:
+        return await OpenMetadataCatalogService(client).list_tables(page_size or settings.openmetadata_catalog_page_size, after)
+    finally:
+        await client.close()
+
+
+@router.get("/api/catalog/tables/{table_id}", response_model=CatalogTable)
+async def catalog_table(table_id: str, authz: AuthzDep, settings: SettingsDep):
+    try:
+        await authz.get_current_user()
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
+    client = OpenMetadataClient(settings)
+    try:
+        return await OpenMetadataCatalogService(client).get_table(table_id)
+    finally:
+        await client.close()
+
+
+@router.post("/api/access-requests", response_model=AccessRequestCreated, status_code=status.HTTP_201_CREATED)
+async def create_access_request(request: AccessRequestCreate, authz: AuthzDep, settings: SettingsDep):
+    try:
+        user = await authz.get_current_user()
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
+    client = OpenMetadataClient(settings)
+    try:
+        return await OpenMetadataAccessRequestService(client, settings).create(user.identity, request)
+    finally:
+        await client.close()
+
+
 @router.get("/api/tasks/{task_id}")
 async def task_by_id(task_id: str, session: SessionDep, settings: SettingsDep):
     # Task retrieval is intentionally delegated to OpenMetadata with the user's token.
     client = OpenMetadataClient(settings)
     try:
         return await client.get(f"{settings.openmetadata_tasks_path.rstrip('/')}/{task_id}")
+    finally:
+        await client.close()
+
+
+@router.get("/api/requests", response_model=TaskPage)
+async def my_requests(
+    authz: AuthzDep,
+    settings: SettingsDep,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    try:
+        user = await authz.get_current_user()
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
+    client = OpenMetadataClient(settings)
+    try:
+        return await OpenMetadataTaskService(client, user.identity.id).list_created_tasks(page, page_size)
     finally:
         await client.close()
 

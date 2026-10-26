@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -27,6 +27,7 @@ class MeResponse(BaseModel):
 
 class Task(BaseModel):
     id: str
+    request_id: str | None = None
     type: str | None = None
     status: str | None = None
     assignee: str | None = None
@@ -34,6 +35,7 @@ class Task(BaseModel):
     created_at: datetime | None = None
     due_at: datetime | None = None
     requester: str | None = None
+    reason: str | None = None
     link: str | None = None
 
 
@@ -47,3 +49,51 @@ class TaskPage(BaseModel):
 class QueryRequest(BaseModel):
     sql: str = Field(min_length=1, max_length=10_000)
     parameters: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+
+
+class CatalogColumn(BaseModel):
+    id: str
+    name: str
+    data_type: str | None = None
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+
+
+class CatalogOwner(BaseModel):
+    id: str
+    type: Literal["user", "team"]
+    name: str | None = None
+    display_name: str | None = None
+    fully_qualified_name: str | None = None
+
+
+class CatalogTable(BaseModel):
+    id: str
+    name: str
+    fully_qualified_name: str | None = None
+    description: str | None = None
+    service: str | None = None
+    database: str | None = None
+    schema_name: str | None = None
+    owners: list[CatalogOwner] = Field(default_factory=list)
+    columns: list[CatalogColumn] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+
+
+class CatalogPage(BaseModel):
+    items: list[CatalogTable]
+    after: str | None = None
+
+
+class AccessRequestCreate(BaseModel):
+    table_id: str = Field(min_length=1, max_length=128)
+    column_ids: list[Annotated[str, Field(min_length=1, max_length=128)]] = Field(default_factory=list, max_length=100)
+    access: Literal["READ", "WRITE"] = "READ"
+    reason: str = Field(min_length=3, max_length=2_000)
+
+
+class AccessRequestCreated(BaseModel):
+    id: str
+    request_id: str
+    status: str | None = None
+    assignee_count: int
