@@ -8,3 +8,5 @@ export type CatalogTable = { id: string; name: string; fully_qualified_name?: st
 export type CatalogPage = { items: CatalogTable[]; after?: string }
 export type AccessRequestCreate = { table_id: string; column_ids: string[]; access: 'READ' | 'WRITE'; reason: string }
 export type AccessRequestCreated = { id: string; request_id: string; status?: string; assignee_count: number }
+export type GrantedAccess = { id: string; request_id?: string; table_id?: string; table_name?: string; table_fully_qualified_name?: string; access_type?: string; access_level?: string; columns: string[]; granted_at?: string; expires_at?: string }
+export type GrantedAccessPage = { items: GrantedAccess[]; total: number }

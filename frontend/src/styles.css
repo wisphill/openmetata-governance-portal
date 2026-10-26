@@ -151,6 +151,11 @@ tbody tr:last-child td { border-bottom: 0; }
 .catalog-item span, .catalog-item small { overflow: hidden; color: var(--text-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .catalog-more { width: 100%; margin-top: 12px; }
 .request-reason { min-width: 220px; max-width: 420px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.access-grants { margin-top: 28px; }
+.access-grants > h2 { margin: 0 0 4px; font-size: 20px; }
+.access-grants > p { color: var(--text-muted); }
+.access-grants td strong, .access-grants td small { display: block; }
+.access-grants td small { margin-top: 3px; color: var(--text-muted); font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere; }
 .request-form { display: grid; gap: 14px; }
 .request-form h2 { margin-bottom: -12px; }
 .request-form > p { margin: 0; color: var(--text-muted); }

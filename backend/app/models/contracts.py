@@ -97,3 +97,21 @@ class AccessRequestCreated(BaseModel):
     request_id: str
     status: str | None = None
     assignee_count: int
+
+
+class GrantedAccess(BaseModel):
+    id: str
+    request_id: str | None = None
+    table_id: str | None = None
+    table_name: str | None = None
+    table_fully_qualified_name: str | None = None
+    access_type: str | None = None
+    access_level: str | None = None
+    columns: list[str] = Field(default_factory=list)
+    granted_at: datetime | None = None
+    expires_at: datetime | None = None
+
+
+class GrantedAccessPage(BaseModel):
+    items: list[GrantedAccess]
+    total: int

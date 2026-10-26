@@ -8,10 +8,11 @@ from app.auth.oidc import OidcClient
 from app.auth.session import Session
 from app.config import Settings, get_settings
 from app.database.oracle import OracleAdapter
-from app.models.contracts import AccessRequestCreate, AccessRequestCreated, CatalogPage, CatalogTable, MeResponse, QueryRequest, TaskPage
+from app.models.contracts import AccessRequestCreate, AccessRequestCreated, CatalogPage, CatalogTable, GrantedAccessPage, MeResponse, QueryRequest, TaskPage
 from app.openmetadata.access_requests import OpenMetadataAccessRequestService
 from app.openmetadata.authorization import OpenMetadataAuthorizationService
 from app.openmetadata.catalog import OpenMetadataCatalogService
+from app.openmetadata.grants import OpenMetadataGrantedAccessService
 from app.openmetadata.client import OpenMetadataClient
 from app.openmetadata.tasks import OpenMetadataTaskService
 
@@ -196,6 +197,19 @@ async def my_requests(
     client = OpenMetadataClient(settings)
     try:
         return await OpenMetadataTaskService(client, user.identity.id).list_created_tasks(page, page_size)
+    finally:
+        await client.close()
+
+
+@router.get("/api/me/granted-access", response_model=GrantedAccessPage)
+async def granted_access(authz: AuthzDep, settings: SettingsDep):
+    try:
+        user = await authz.get_current_user()
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
+    client = OpenMetadataClient(settings)
+    try:
+        return await OpenMetadataGrantedAccessService(client, user.identity.id).list_granted()
     finally:
         await client.close()
 
