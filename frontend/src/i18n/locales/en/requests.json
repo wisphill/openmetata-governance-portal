@@ -1,0 +1,10 @@
+{
+  "description": "Requests you have submitted in OpenMetadata.",
+  "empty": "You have not submitted any requests yet.",
+  "createFirst": "Create your first request",
+  "id": "Request ID",
+  "type": "Type",
+  "reason": "Access reason",
+  "status": "Status",
+  "requestedAt": "Requested at"
+}

@@ -3,10 +3,13 @@ WRANGLER ?= npx --yes wrangler@4
 PAGES_PROJECT ?= openmetadata-governance-portal
 PAGES_BRANCH ?= main
 
-.PHONY: install build test verify pages-deploy
+.PHONY: install run build test verify pages-deploy
 
 install:
 	$(NPM) ci
+
+run:
+	$(NPM) run dev -- --host 0.0.0.0
 
 build:
 	$(NPM) run build

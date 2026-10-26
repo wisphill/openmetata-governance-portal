@@ -1,0 +1,10 @@
+{
+  "description": "Các yêu cầu bạn đã gửi trong OpenMetadata.",
+  "empty": "Bạn chưa gửi yêu cầu nào.",
+  "createFirst": "Tạo yêu cầu đầu tiên",
+  "id": "Mã yêu cầu",
+  "type": "Loại",
+  "reason": "Lý do truy cập",
+  "status": "Trạng thái",
+  "requestedAt": "Thời điểm yêu cầu"
+}

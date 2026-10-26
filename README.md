@@ -11,7 +11,7 @@ A two-application starter for a governance portal that shares an OIDC identity p
 
 1. `GET /auth/login` starts Authorization Code + PKCE and saves `state` and `code_verifier` in a short-lived in-memory session.
 2. `/auth/callback` exchanges the code server-side, validates the ID token against issuer JWKS/audience, then maps the validated identity to an OpenMetadata user.
-3. Before session creation, the backend uses the server-only `OM_ADMIN_BOT_TOKEN` to find an active OpenMetadata user with the configured Google email claim. An unmapped or disabled user is redirected to `/access-denied`.
+3. Before session creation, the backend uses the server-only `OM_ADMIN_BOT_TOKEN` to find an active OpenMetadata user with the configured identity mapping. `OPENMETADATA_USER_LOOKUP_FIELD=email` matches the configured Google email claim; `name` matches `OIDC_USERNAME_CLAIM`, falling back to the email local part. An unmapped or disabled user is redirected to `/access-denied`.
 4. The browser receives only an opaque, HMAC-signed, `HttpOnly` session cookie. Google credentials are discarded after identity verification; OpenMetadata calls use the server-only admin-bot token.
 5. Routes derive the OpenMetadata identity and task assignee from the validated portal session. The portal admission gate is not a substitute for narrowly scoped OpenMetadata permissions.
 
@@ -33,6 +33,12 @@ Configure an IdP and an OpenMetadata instance before signing in. This deployment
 For Google OIDC, set `OIDC_AUDIENCE` to the Google OAuth client ID, or leave it empty to validate against `OIDC_CLIENT_ID` automatically.
 
 `POST /api/database/query` is deliberately disabled unless `DATABASE_QUERIES_ENABLED=true`; it supports parameterized, read-only SQL through an Oracle proxy session. Configure proxy grants and the identity allowlist in Oracle—never accept a database username from the browser.
+
+## Catalogue access requests
+
+Authenticated OpenMetadata users can browse normalized table and column metadata through `GET /api/catalog/tables` and `GET /api/catalog/tables/{id}`. `POST /api/access-requests` validates that the requested columns belong to the selected table, reloads that table from OpenMetadata, and assigns the resulting task to its configured data owner(s). The browser cannot supply assignees or requester identity.
+
+The default request adapter posts an OpenMetadata v1-style task to `/tasks` with task type `RequestAccess`. Confirm `OPENMETADATA_ACCESS_REQUEST_TASK_PATH` and `OPENMETADATA_ACCESS_REQUEST_TASK_TYPE` against the deployed OpenMetadata release before enabling it; those values are intentionally configurable because task schemas differ between OpenMetadata releases.
 
 ## Delivery flow
 
