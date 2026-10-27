@@ -8,7 +8,7 @@ from app.auth.oidc import OidcClient
 from app.auth.session import Session
 from app.config import Settings, get_settings
 from app.database.oracle import OracleAdapter
-from app.models.contracts import AccessRequestCreate, AccessRequestCreated, CatalogPage, CatalogTable, GrantedAccessPage, MeResponse, QueryRequest, TaskPage
+from app.models.contracts import AccessRequestCreate, AccessRequestCreated, AccessRequestDetail, CatalogPage, CatalogTable, GrantedAccessPage, MeResponse, QueryRequest, TaskPage
 from app.openmetadata.access_requests import OpenMetadataAccessRequestService
 from app.openmetadata.authorization import OpenMetadataAuthorizationService
 from app.openmetadata.catalog import OpenMetadataCatalogService
@@ -197,6 +197,38 @@ async def my_requests(
     client = OpenMetadataClient(settings)
     try:
         return await OpenMetadataTaskService(client, user.identity.id).list_created_tasks(page, page_size)
+    finally:
+        await client.close()
+
+
+@router.delete("/api/requests/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def cancel_my_request(task_id: str, authz: AuthzDep, settings: SettingsDep):
+    try:
+        user = await authz.get_current_user()
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
+    client = OpenMetadataClient(settings)
+    try:
+        await OpenMetadataTaskService(client, user.identity.id).cancel_created_task(task_id)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    finally:
+        await client.close()
+
+
+@router.get("/api/requests/{task_id}", response_model=AccessRequestDetail)
+async def my_request_detail(task_id: str, authz: AuthzDep, settings: SettingsDep):
+    try:
+        user = await authz.get_current_user()
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
+    client = OpenMetadataClient(settings)
+    try:
+        return await OpenMetadataTaskService(client, user.identity.id).get_created_task(task_id)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
     finally:
         await client.close()
 

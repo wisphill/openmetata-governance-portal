@@ -31,6 +31,7 @@ class Task(BaseModel):
     type: str | None = None
     status: str | None = None
     assignee: str | None = None
+    assignees: list[str] = Field(default_factory=list)
     entity: dict[str, Any] | None = None
     created_at: datetime | None = None
     due_at: datetime | None = None
@@ -44,6 +45,17 @@ class TaskPage(BaseModel):
     page: int
     page_size: int
     total: int | None = None
+
+
+class AccessRequestDetail(Task):
+    table_name: str | None = None
+    table_fully_qualified_name: str | None = None
+    database: str | None = None
+    schema_name: str | None = None
+    access_type: str | None = None
+    access_level: str | None = None
+    columns: list[str] = Field(default_factory=list)
+    expires_at: datetime | None = None
 
 
 class QueryRequest(BaseModel):

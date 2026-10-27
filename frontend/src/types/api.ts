@@ -1,6 +1,6 @@
 export type Me = { identity: { id: string; username: string; display_name?: string; email?: string; title?: string }; teams: Array<Record<string, unknown>>; roles: { direct: Array<Record<string, unknown>>; inherited: Array<Record<string, unknown>> }; policies: Array<Record<string, unknown>>; is_admin: boolean; source: 'openmetadata' }
 export type Classification = 'C1' | 'C2' | 'C3' | 'C4'
-export type Task = { id: string; request_id?: string; code?: string; title?: string; process?: { code: string; name: string }; classification?: Classification; type?: string; status?: string; assignee?: string; entity?: { name?: string; [key: string]: unknown }; created_at?: string; due_at?: string; requester?: string; reason?: string; link?: string }
+export type Task = { id: string; request_id?: string; code?: string; title?: string; process?: { code: string; name: string }; classification?: Classification; type?: string; status?: string; assignee?: string; assignees?: string[]; entity?: { name?: string; [key: string]: unknown }; created_at?: string; due_at?: string; requester?: string; reason?: string; link?: string }
 export type TaskPage = { items: Task[]; page: number; page_size: number; total?: number }
 export type CatalogColumn = { id: string; name: string; data_type?: string; description?: string; tags: string[] }
 export type CatalogOwner = { id: string; type: 'user' | 'team'; name?: string; display_name?: string }
@@ -8,5 +8,6 @@ export type CatalogTable = { id: string; name: string; fully_qualified_name?: st
 export type CatalogPage = { items: CatalogTable[]; after?: string }
 export type AccessRequestCreate = { table_id: string; column_ids: string[]; access: 'READ' | 'WRITE'; reason: string }
 export type AccessRequestCreated = { id: string; request_id: string; status?: string; assignee_count: number }
+export type AccessRequestDetail = Task & { table_name?: string; table_fully_qualified_name?: string; database?: string; schema_name?: string; access_type?: string; access_level?: string; columns: string[]; expires_at?: string }
 export type GrantedAccess = { id: string; request_id?: string; table_id?: string; table_name?: string; table_fully_qualified_name?: string; access_type?: string; access_level?: string; columns: string[]; granted_at?: string; expires_at?: string }
 export type GrantedAccessPage = { items: GrantedAccess[]; total: number }

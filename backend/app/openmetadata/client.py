@@ -19,7 +19,12 @@ class OpenMetadataClient:
         )
 
     async def get(self, path: str, params: dict | None = None) -> dict[str, Any]:
-        response = await self._client.get(path, params=params)
+        try:
+            response = await self._client.get(path, params=params)
+        except httpx.TimeoutException as exc:
+            raise HTTPException(status.HTTP_504_GATEWAY_TIMEOUT, "OpenMetadata request timed out") from exc
+        except httpx.RequestError as exc:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OpenMetadata request was unavailable") from exc
         if response.status_code in (401, 403, 404, 409, 429):
             raise HTTPException(response.status_code, "OpenMetadata request was not allowed or unavailable")
         if response.is_error:
@@ -27,7 +32,12 @@ class OpenMetadataClient:
         return response.json()
 
     async def post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        response = await self._client.post(path, json=payload)
+        try:
+            response = await self._client.post(path, json=payload)
+        except httpx.TimeoutException as exc:
+            raise HTTPException(status.HTTP_504_GATEWAY_TIMEOUT, "OpenMetadata request timed out") from exc
+        except httpx.RequestError as exc:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OpenMetadata request was unavailable") from exc
         if response.status_code in (400, 401, 403, 404, 409, 422, 429):
             try:
                 upstream = response.json()
@@ -37,6 +47,24 @@ class OpenMetadataClient:
             raise HTTPException(response.status_code, str(detail))
         if response.is_error:
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OpenMetadata request failed")
+        return response.json() if response.status_code != status.HTTP_204_NO_CONTENT else {}
+
+    async def put(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            response = await self._client.put(path, json=payload)
+        except httpx.TimeoutException as exc:
+            raise HTTPException(status.HTTP_504_GATEWAY_TIMEOUT, "OpenMetadata request timed out") from exc
+        except httpx.RequestError as exc:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OpenMetadata request was unavailable") from exc
+        if response.status_code in (400, 401, 403, 404, 409, 422, 429):
+            try:
+                upstream = response.json()
+            except ValueError:
+                upstream = {}
+            detail = upstream.get("message") or upstream.get("detail") or "OpenMetadata rejected the request update"
+            raise HTTPException(response.status_code, str(detail))
+        if response.is_error:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OpenMetadata request update failed")
         return response.json()
 
     async def close(self) -> None:
