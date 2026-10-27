@@ -15,6 +15,16 @@ class OpenMetadataAuthorizationService:
         user = await self._find_user(lookup_value)
         if not user or user.get("isActive", True) is False:
             raise PermissionError("No active OpenMetadata user is mapped to this OIDC identity")
+        return await self._to_me_response(user)
+
+    async def get_user_by_email(self, email: str) -> MeResponse | None:
+        """Resolve an active OpenMetadata user by their email address."""
+        user = await self._find_user_by_field("email", email)
+        if not user or user.get("isActive", True) is False:
+            return None
+        return await self._to_me_response(user)
+
+    async def _to_me_response(self, user: dict) -> MeResponse:
         user = await self.client.get(f"/users/{user['id']}", {"fields": "teams,roles,profile"})
         teams = user.get("teams", [])
         direct_roles = await self._resolve_roles(user.get("roles", []))
@@ -67,9 +77,11 @@ class OpenMetadataAuthorizationService:
         return self.username or (self.email.split("@", 1)[0] if self.email else None)
 
     async def _find_user(self, value: str) -> dict | None:
+        return await self._find_user_by_field(self.client.settings.openmetadata_user_lookup_field, value)
+
+    async def _find_user_by_field(self, field: str, value: str) -> dict | None:
         """Use OM's cursor pagination because its Users list API has no identity filter."""
         cursor: str | None = None
-        field = self.client.settings.openmetadata_user_lookup_field
         target = value.casefold()
         for _ in range(self.client.settings.openmetadata_user_lookup_max_pages):
             params = {

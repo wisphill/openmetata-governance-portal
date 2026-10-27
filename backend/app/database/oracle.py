@@ -14,16 +14,17 @@ class OracleAdapter(DatabaseAdapter):
         self.connection: Any | None = None
 
     async def connect(self, application_identity: str) -> None:
-        if application_identity.lower() not in self.settings.oracle_allowlist:
-            raise PermissionError("This identity is not permitted for Oracle proxy access")
         if not all([self.settings.oracle_dsn, self.settings.oracle_proxy_user, self.settings.oracle_proxy_password]):
             raise RuntimeError("Oracle proxy connection is not configured")
+        if str(self.settings.oracle_dsn).lower().startswith(("http://", "https://")):
+            raise RuntimeError("ORACLE_DSN must be an Oracle Easy Connect string or connect descriptor, not an HTTP URL")
         try:
             import oracledb
         except ImportError as exc:
             raise RuntimeError("Install the backend oracle dependency to enable Oracle") from exc
         # Oracle proxy syntax is CONNECT proxy_user[client_user]; client identity is never browser-controlled.
-        username = f"{self.settings.oracle_proxy_user}[{application_identity}]"
+        # The client is a quoted, durable account named ``om::<OM UUID>``.
+        username = f'{self.settings.oracle_proxy_user}["{application_identity}"]'
         self.connection = await asyncio.to_thread(
             oracledb.connect, user=username, password=self.settings.oracle_proxy_password, dsn=self.settings.oracle_dsn
         )

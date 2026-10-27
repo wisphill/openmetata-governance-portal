@@ -28,3 +28,21 @@ async def test_name_lookup_uses_username_claim_or_email_local_part(settings):
     user = await service._find_user(service._lookup_value())
 
     assert user["id"] == "user-1"
+
+
+class UserDetailClient(StubClient):
+    async def get(self, path, params):
+        if path == "/users":
+            return {"data": self.users, "paging": {}}
+        assert path == "/users/user-1"
+        return {"id": "user-1", "name": "phuong", "email": "phuong@example.com", "isActive": True, "teams": [], "roles": []}
+
+
+async def test_user_access_lookup_always_uses_email(settings):
+    name_settings = settings.model_copy(update={"openmetadata_user_lookup_field": "name"})
+    client = UserDetailClient(name_settings, [{"id": "user-1", "email": "phuong@example.com", "name": "phuong"}])
+
+    user = await OpenMetadataAuthorizationService(client, "viewer@example.com").get_user_by_email("phuong@example.com")
+
+    assert user is not None
+    assert user.identity.email == "phuong@example.com"

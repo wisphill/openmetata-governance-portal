@@ -70,6 +70,14 @@ class QueryRequest(BaseModel):
     parameters: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
 
 
+class QueryResult(BaseModel):
+    columns: list[str]
+    items: list[dict[str, Any]]
+    row_count: int
+    is_dummy: bool = False
+    message: str
+
+
 class CatalogColumn(BaseModel):
     id: str
     name: str
@@ -134,3 +142,26 @@ class GrantedAccess(BaseModel):
 class GrantedAccessPage(BaseModel):
     items: list[GrantedAccess]
     total: int
+
+
+class AssociatedDatabaseAccount(BaseModel):
+    account_name: str
+    state: Literal["found", "not_found", "not_configured", "unavailable"]
+    account_status: str | None = None
+    created_at: datetime | None = None
+
+
+class AccessRevocation(BaseModel):
+    grant_id: str
+    account_name: str
+    revoked_resource: str
+    openmetadata_state: Literal["revoked"]
+    database_revoke_state: Literal["revoked", "skipped"]
+
+
+class UserAccessAudit(BaseModel):
+    """A read-only access view for a user resolved from OpenMetadata."""
+
+    user: MeResponse
+    audited_openmetadata_grants: GrantedAccessPage
+    associated_database_account: AssociatedDatabaseAccount

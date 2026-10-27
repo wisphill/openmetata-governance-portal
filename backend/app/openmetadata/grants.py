@@ -5,7 +5,12 @@ from app.openmetadata.client import OpenMetadataClient
 
 
 class OpenMetadataGrantedAccessService:
-    """Reads native Granted DataAccessRequest tasks for one portal user."""
+    """Reads approved DataAccessRequest audit records for one portal user."""
+
+    # OpenMetadata task lifecycles differ by deployment/release. The current
+    # deployment exposes successful Data Access Requests as `Approved`; some
+    # supported releases use `Granted` instead.
+    _APPROVED_STATUSES = ("Approved", "Granted")
 
     def __init__(self, client: OpenMetadataClient, user_id: str) -> None:
         self.client = client
@@ -15,8 +20,11 @@ class OpenMetadataGrantedAccessService:
         # Native UI-created requests use requestedById. Portal-created requests
         # are created by the server bot, so their allowed task-name correlation
         # is queried separately.
-        direct = await self._list({"requestedById": self.user_id})
-        portal = await self._list({"q": f"portal-access-{self.user_id}"})
+        direct: list[dict] = []
+        portal: list[dict] = []
+        for status in self._APPROVED_STATUSES:
+            direct.extend(await self._list({"status": status, "requestedById": self.user_id}))
+            portal.extend(await self._list({"status": status, "q": f"portal-access-{self.user_id}"}))
         by_id = {str(task.get("id")): task for task in [*direct, *portal]}
         return GrantedAccessPage(items=[self._normalize(task) for task in by_id.values()], total=len(by_id))
 
@@ -26,7 +34,10 @@ class OpenMetadataGrantedAccessService:
         limit = 100
         while True:
             payload = await self.client.get("/tasks/dataAccessRequests", {
-                "status": "Granted", "limit": limit, "offset": offset,
+                "limit": limit, "offset": offset,
+                # Keep this to fields supported by the deployed task API.
+                # `closedBy` is not accepted by older OpenMetadata versions and
+                # causes the complete lookup to fail with HTTP 400.
                 "fields": "about,payload,createdBy", **filters,
             })
             page = payload.get("data", [])

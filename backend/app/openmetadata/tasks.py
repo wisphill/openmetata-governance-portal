@@ -3,15 +3,18 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 
 from app.cache.user_names import UserNameCache
+from app.config import Settings
+from app.database.oracle_access_provisioning import OracleAccessProvisioner
 from app.models.contracts import AccessRequestDetail, Task, TaskPage, TaskResolutionRequest
 from app.openmetadata.client import OpenMetadataClient
 
 
 class OpenMetadataTaskService:
-    def __init__(self, client: OpenMetadataClient, user_id: str, user_name_cache: UserNameCache | None = None) -> None:
+    def __init__(self, client: OpenMetadataClient, user_id: str, user_name_cache: UserNameCache | None = None, settings: Settings | None = None) -> None:
         self.client = client
         self.user_id = user_id
         self.user_name_cache = user_name_cache
+        self.settings = settings
 
     async def list_tasks(self, page: int, page_size: int, status_filter: str | None, task_type: str | None) -> TaskPage:
         """List v2 tasks assigned to the authenticated OpenMetadata identity.
@@ -89,12 +92,39 @@ class OpenMetadataTaskService:
             raise PermissionError("You can only resolve tasks assigned to you")
         if str(task.get("status", "")).lower() not in {"open", "inprogress", "pending"}:
             raise ValueError("This task can no longer be resolved")
+        provision_oracle_access = (
+            resolution.resolution_type == "Approved"
+            and (task.get("taskType") or task.get("type")) == self.client.settings.openmetadata_access_request_task_type
+        )
+        grant_target = self._oracle_grant_target(task) if provision_oracle_access else None
         resolved = await self.client.post(
             f"{self.client.settings.openmetadata_access_request_task_path.rstrip('/')}/{task_id}/resolve",
             {"resolutionType": resolution.resolution_type, "comment": resolution.comment},
         )
+        if provision_oracle_access:
+            if self.settings is None:
+                raise RuntimeError("Oracle access provisioning settings are required")
+            requester_id, schema, table = grant_target
+            await OracleAccessProvisioner(self.settings).grant_select(requester_id, schema, table)
         requester_names = await self._requester_names([resolved])
         return self._normalize(resolved, requester_names.get(self._requester_id(resolved)))
+
+    def _oracle_grant_target(self, task: dict) -> tuple[str, str, str]:
+        """Return the trusted requester and table identified by the OM task."""
+        requester_id = self._requester_id(task)
+        if not requester_id:
+            raise ValueError("The access request has no OpenMetadata requester")
+        payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+        if payload.get("accessType") == "ColumnLevel" or payload.get("columns"):
+            raise ValueError("Oracle provisioning currently supports table-level access requests only")
+        about = task.get("about") if isinstance(task.get("about"), dict) else {}
+        fqn = about.get("fullyQualifiedName")
+        if not isinstance(fqn, str):
+            raise ValueError("The access request does not identify a table")
+        parts = fqn.split(".")
+        if len(parts) < 2:
+            raise ValueError("The requested table fully qualified name is invalid")
+        return requester_id, parts[-2], parts[-1]
 
     async def get_created_task(self, task_id: str) -> AccessRequestDetail:
         task = await self.client.get(f"{self.client.settings.openmetadata_access_request_task_path.rstrip('/')}/{task_id}")

@@ -47,9 +47,16 @@ class Settings(BaseSettings):
     openmetadata_timeout_seconds: float = 10
     database_queries_enabled: bool = False
     oracle_dsn: str | None = None
+    # Dedicated provisioning principal. It is used only to create and remove a
+    # short-lived proxy client; it must not be the portal's runtime proxy user.
+    oracle_provisioner_user: str | None = None
+    oracle_provisioner_password: str | None = None
     oracle_proxy_user: str | None = None
     oracle_proxy_password: str | None = None
     oracle_user_allowlist: str = ""
+    oracle_query_schema: str = "APP"
+    oracle_query_table: str = "CUSTOMERS"
+    oracle_query_max_rows: int = Field(default=1_000, ge=1, le=10_000)
 
     @property
     def cors_origin_list(self) -> list[str]:

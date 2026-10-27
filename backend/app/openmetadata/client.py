@@ -1,9 +1,13 @@
+import logging
 from typing import Any
 
 import httpx
 from fastapi import HTTPException, status
 
 from app.config import Settings
+
+
+logger = logging.getLogger(__name__)
 
 
 class OpenMetadataClient:
@@ -25,9 +29,13 @@ class OpenMetadataClient:
             raise HTTPException(status.HTTP_504_GATEWAY_TIMEOUT, "OpenMetadata request timed out") from exc
         except httpx.RequestError as exc:
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OpenMetadata request was unavailable") from exc
-        if response.status_code in (401, 403, 404, 409, 429):
-            raise HTTPException(response.status_code, "OpenMetadata request was not allowed or unavailable")
+        if response.status_code in (400, 401, 403, 404, 409, 422, 429):
+            # Do not put upstream response bodies in the browser response or
+            # logs; they can contain implementation details or user data.
+            logger.warning("OpenMetadata GET failed: status=%s path=%s", response.status_code, path)
+            raise HTTPException(response.status_code, f"OpenMetadata rejected GET {path} (HTTP {response.status_code})")
         if response.is_error:
+            logger.warning("OpenMetadata GET failed: status=%s path=%s", response.status_code, path)
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OpenMetadata request failed")
         return response.json()
 

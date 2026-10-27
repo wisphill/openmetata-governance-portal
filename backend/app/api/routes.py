@@ -1,3 +1,4 @@
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -8,7 +9,9 @@ from app.auth.oidc import OidcClient
 from app.auth.session import Session
 from app.config import Settings, get_settings
 from app.database.oracle import OracleAdapter
-from app.models.contracts import AccessRequestCreate, AccessRequestCreated, AccessRequestDetail, CatalogPage, CatalogTable, GrantedAccessPage, MeResponse, QueryRequest, Task, TaskPage, TaskResolutionRequest
+from app.database.oracle_access_provisioning import OracleAccessProvisioner
+from app.database.oracle_temporary_proxy import OracleTemporaryProxyQueryService
+from app.models.contracts import AccessRequestCreate, AccessRequestCreated, AccessRequestDetail, AccessRevocation, CatalogPage, CatalogTable, GrantedAccessPage, MeResponse, QueryRequest, QueryResult, Task, TaskPage, TaskResolutionRequest, UserAccessAudit
 from app.openmetadata.access_requests import OpenMetadataAccessRequestService
 from app.openmetadata.authorization import OpenMetadataAuthorizationService
 from app.openmetadata.catalog import OpenMetadataCatalogService
@@ -17,6 +20,7 @@ from app.openmetadata.client import OpenMetadataClient
 from app.openmetadata.tasks import OpenMetadataTaskService
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 SessionDep = Annotated[Session, Depends(require_session)]
 
@@ -192,7 +196,7 @@ async def resolve_task(task_id: str, resolution: TaskResolutionRequest, request:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
     client = OpenMetadataClient(settings)
     try:
-        return await OpenMetadataTaskService(client, user.identity.id, request.app.state.user_name_cache).resolve_assigned_task(task_id, resolution)
+        return await OpenMetadataTaskService(client, user.identity.id, request.app.state.user_name_cache, settings).resolve_assigned_task(task_id, resolution)
     except PermissionError as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
     except ValueError as exc:
@@ -265,12 +269,115 @@ async def granted_access(authz: AuthzDep, settings: SettingsDep):
         await client.close()
 
 
+@router.get("/api/users/access", response_model=UserAccessAudit)
+async def user_access_by_email(
+    authz: AuthzDep,
+    settings: SettingsDep,
+    email: str = Query(..., min_length=3, max_length=320),
+):
+    # Deliberately no admin/data-owner ACL yet: the screen is currently an
+    # authenticated read-only operational view. Revisit this before exposing it
+    # outside the portal's trusted audience.
+    try:
+        await authz.get_current_user()
+        user = await authz.get_user_by_email(email)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No active OpenMetadata user was found for this email address")
+    grants = await OpenMetadataGrantedAccessService(authz.client, user.identity.id).list_granted()
+    database_account = await OracleAccessProvisioner(settings).find_client_account(user.identity.id)
+    return UserAccessAudit(
+        user=user,
+        audited_openmetadata_grants=grants,
+        associated_database_account=database_account,
+    )
+
+
+@router.post("/api/users/access/{user_id}/grants/{grant_id}/revoke", response_model=AccessRevocation)
+async def revoke_user_access_grant(user_id: str, grant_id: str, authz: AuthzDep, settings: SettingsDep):
+    # Authorization question: is the caller an OpenMetadata administrator, and
+    # does this approved portal task belong to the requested OM user?
+    actor = await authz.get_current_user()
+    if not actor.is_admin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only OpenMetadata administrators can revoke portal-managed access")
+    client = OpenMetadataClient(settings)
+    try:
+        task = await client.get(
+            f"{settings.openmetadata_access_request_task_path.rstrip('/')}/{grant_id}",
+            {"fields": "availableTransitions,about,payload"},
+        )
+        if not str(task.get("name", "")).startswith(f"portal-access-{user_id}-"):
+            raise HTTPException(status.HTTP_409_CONFLICT, "This grant is not managed by the portal for the selected user")
+        if str(task.get("status", "")).lower() not in {"approved", "granted"}:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Only approved data-access grants can be revoked")
+        payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+        if payload.get("accessType") == "ColumnLevel" or payload.get("columns"):
+            raise HTTPException(status.HTTP_409_CONFLICT, "Column-level access is not provisioned by the portal and cannot be revoked here")
+        about = task.get("about") if isinstance(task.get("about"), dict) else {}
+        fqn = about.get("fullyQualifiedName")
+        if not isinstance(fqn, str):
+            raise HTTPException(status.HTTP_409_CONFLICT, "The grant does not identify a table resource")
+        parts = fqn.split(".")
+        if len(parts) < 2:
+            raise HTTPException(status.HTTP_409_CONFLICT, "The grant table resource is invalid")
+        transitions = task.get("availableTransitions") if isinstance(task.get("availableTransitions"), list) else []
+        revoke_transition = next(
+            (
+                transition for transition in transitions
+                if isinstance(transition, dict)
+                and transition.get("resolutionType") == "Revoked"
+                and isinstance(transition.get("id"), str)
+            ),
+            None,
+        )
+        if not revoke_transition:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "OpenMetadata does not expose a revoke transition for this grant. Configure a DataAccessRequest workflow with an Approved/Granted-to-Revoked transition.",
+            )
+        # Persist the revocation through the workflow supplied by OpenMetadata.
+        # This produces its change event, policy-agent side effects, and
+        # notifications instead of bypassing lifecycle controls.
+        await client.post(
+            f"{settings.openmetadata_access_request_task_path.rstrip('/')}/{grant_id}/resolve",
+            {
+                "transitionId": revoke_transition["id"],
+                "resolutionType": "Revoked",
+                "comment": "Revoked by a portal administrator.",
+            },
+        )
+    finally:
+        await client.close()
+    provisioner = OracleAccessProvisioner(settings)
+    try:
+        account_name = provisioner.client_username(user_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    try:
+        await provisioner.revoke_select(user_id, parts[-2], parts[-1])
+        database_revoke_state = "revoked"
+    except Exception:
+        # OpenMetadata has already recorded the workflow revocation. Database
+        # cleanup is best-effort: a missing or unavailable Oracle account must
+        # not turn that completed revocation into a failed request.
+        logger.warning("Oracle revoke skipped for portal grant %s and account %s", grant_id, account_name, exc_info=True)
+        database_revoke_state = "skipped"
+    return AccessRevocation(
+        grant_id=grant_id,
+        account_name=account_name,
+        revoked_resource=fqn,
+        openmetadata_state="revoked",
+        database_revoke_state=database_revoke_state,
+    )
+
+
 @router.post("/api/database/query")
 async def database_query(request: QueryRequest, authz: AuthzDep, settings: SettingsDep):
     if not settings.database_queries_enabled:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Database query endpoint is disabled")
     user = await authz.get_current_user()
-    identity = user.identity.email or user.identity.username
+    identity = OracleAccessProvisioner.client_username(user.identity.id)
     adapter = OracleAdapter(settings)
     try:
         await adapter.connect(identity)
@@ -279,3 +386,23 @@ async def database_query(request: QueryRequest, authz: AuthzDep, settings: Setti
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
     finally:
         await adapter.disconnect()
+
+
+@router.post("/api/query", response_model=QueryResult)
+async def query(request: QueryRequest, authz: AuthzDep, settings: SettingsDep):
+    await authz.get_current_user()
+    try:
+        result = await OracleTemporaryProxyQueryService(settings).execute(request.sql, request.parameters)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Oracle temporary-proxy query failed")
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Oracle could not execute the query. The temporary proxy user was cleaned up.") from exc
+    return QueryResult(
+        columns=result.columns,
+        items=result.items,
+        row_count=len(result.items),
+        message="Query completed through a temporary Oracle proxy user.",
+    )

@@ -1,6 +1,7 @@
 from app.openmetadata.tasks import OpenMetadataTaskService
 from app.cache.user_names import MemoryUserNameCache
 from app.models.contracts import TaskResolutionRequest
+from app.database.oracle_access_provisioning import OracleAccessProvisioner
 import pytest
 
 
@@ -152,15 +153,28 @@ class ResolveStubClient:
 
 
 @pytest.mark.asyncio
-async def test_assignee_can_resolve_task_with_comment(settings):
-    client = ResolveStubClient(settings, {"id": "task-43", "status": "Open", "assignees": [{"id": "user-1"}]})
+async def test_assignee_can_resolve_task_with_comment(settings, monkeypatch):
+    client = ResolveStubClient(settings, {
+        "id": "task-43", "type": settings.openmetadata_access_request_task_type, "status": "Open", "createdById": "d2719c8a-6c97-4b35-b662-e791647b41b3",
+        "assignees": [{"id": "user-1"}],
+        "about": {"fullyQualifiedName": "oracle.freepdb1.app.ORDERS"},
+        "payload": {"accessType": "FullAccess", "columns": []},
+    })
+    grants = []
 
-    resolved = await OpenMetadataTaskService(client, "user-1").resolve_assigned_task(
+    async def grant_select(self, requester_id, schema, table):
+        grants.append((requester_id, schema, table))
+        return "om::d2719c8a-6c97-4b35-b662-e791647b41b3"
+
+    monkeypatch.setattr(OracleAccessProvisioner, "grant_select", grant_select)
+
+    resolved = await OpenMetadataTaskService(client, "user-1", settings=settings).resolve_assigned_task(
         "task-43", TaskResolutionRequest(resolution_type="Approved", comment="Approved for reporting"),
     )
 
     assert resolved.status == "Approved"
     assert client.resolution == ("/tasks/task-43/resolve", {"resolutionType": "Approved", "comment": "Approved for reporting"})
+    assert grants == [("d2719c8a-6c97-4b35-b662-e791647b41b3", "app", "ORDERS")]
 
 
 @pytest.mark.asyncio
