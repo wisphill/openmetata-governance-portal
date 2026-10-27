@@ -1,4 +1,6 @@
 from app.openmetadata.tasks import OpenMetadataTaskService
+from app.cache.user_names import MemoryUserNameCache
+from app.models.contracts import TaskResolutionRequest
 import pytest
 
 
@@ -29,6 +31,59 @@ async def test_created_tasks_are_derived_from_the_authenticated_user(settings):
     assert all(path == settings.openmetadata_access_request_task_path for path, _ in client.calls)
     assert client.calls[0][1]["q"] == "portal-access-user-1"
     assert "assignees" in client.calls[0][1]["fields"]
+
+
+class AssignedTaskStubClient:
+    def __init__(self, settings):
+        self.settings = settings
+        self.calls = []
+
+    async def get(self, path, params):
+        self.calls.append((path, params))
+        return {"data": [
+            {"id": "assigned-1", "taskId": "TASK-00043", "type": "DataAccessRequest", "status": "Open", "assignees": [{"id": "user-1", "displayName": "Alice"}]},
+            {"id": "cancelled-1", "taskId": "TASK-00042", "type": "DataAccessRequest", "status": "Cancelled", "assignees": [{"id": "user-1", "displayName": "Alice"}]},
+            {"id": "other-1", "taskId": "TASK-00044", "type": "DataAccessRequest", "status": "Open", "assignees": [{"id": "user-2", "displayName": "Bob"}]},
+        ], "paging": {}}
+
+
+@pytest.mark.asyncio
+async def test_assigned_tasks_are_filtered_by_openmetadata_identity(settings):
+    client = AssignedTaskStubClient(settings)
+
+    page = await OpenMetadataTaskService(client, "user-1").list_tasks(page=1, page_size=20, status_filter=None, task_type=None)
+
+    assert [task.request_id for task in page.items] == ["TASK-00043"]
+    assert page.items[0].assignees == ["Alice"]
+    assert client.calls[0][0] == settings.openmetadata_tasks_path
+    assert client.calls[0][1]["status"] == "Open"
+
+
+class RequesterNameStubClient:
+    def __init__(self, settings):
+        self.settings = settings
+        self.user_reads = 0
+
+    async def get(self, path, params):
+        if path == self.settings.openmetadata_tasks_path:
+            return {"data": [{"id": "assigned-1", "taskId": "TASK-00043", "status": "Open", "createdById": "creator-1", "assignees": [{"id": "user-1"}]}], "paging": {}}
+        if path == "/users/creator-1":
+            self.user_reads += 1
+            return {"id": "creator-1", "displayName": "Request Owner"}
+        raise AssertionError(path)
+
+
+@pytest.mark.asyncio
+async def test_requester_names_are_aggregated_and_cached(settings):
+    client = RequesterNameStubClient(settings)
+    service = OpenMetadataTaskService(client, "user-1", MemoryUserNameCache())
+
+    first = await service.list_tasks(page=1, page_size=20, status_filter=None, task_type=None)
+    second = await service.list_tasks(page=1, page_size=20, status_filter=None, task_type=None)
+
+    assert first.items[0].requester == "Request Owner"
+    assert second.items[0].requester == "Request Owner"
+    assert client.user_reads == 1
 
 
 class CancelStubClient:
@@ -68,6 +123,7 @@ async def test_created_request_detail_exposes_normalized_access_scope(settings):
         "id": "task-1", "name": "portal-access-user-1-one", "status": "Open", "assignees": [{"displayName": "Data Owners"}],
         "about": {"name": "ORDERS", "fullyQualifiedName": "oracle.freepdb1.app.ORDERS"},
         "payload": {"accessType": "ColumnLevel", "requestedAccess": "Read", "columns": ["order_id", "status"], "reason": "Reporting", "expirationDate": 1_700_000_000_000},
+        "resolution": {"type": "Rejected", "comment": "Access is limited to the finance team."},
     })
 
     detail = await OpenMetadataTaskService(client, "user-1").get_created_task("task-1")
@@ -77,3 +133,41 @@ async def test_created_request_detail_exposes_normalized_access_scope(settings):
     assert detail.schema_name == "app"
     assert detail.access_level == "Read"
     assert detail.columns == ["order_id", "status"]
+    assert detail.resolution_type == "Rejected"
+    assert detail.resolution_comment == "Access is limited to the finance team."
+
+
+class ResolveStubClient:
+    def __init__(self, settings, task):
+        self.settings = settings
+        self.task = task
+        self.resolution = None
+
+    async def get(self, path, params=None):
+        return self.task
+
+    async def post(self, path, payload):
+        self.resolution = (path, payload)
+        return {**self.task, "status": payload["resolutionType"]}
+
+
+@pytest.mark.asyncio
+async def test_assignee_can_resolve_task_with_comment(settings):
+    client = ResolveStubClient(settings, {"id": "task-43", "status": "Open", "assignees": [{"id": "user-1"}]})
+
+    resolved = await OpenMetadataTaskService(client, "user-1").resolve_assigned_task(
+        "task-43", TaskResolutionRequest(resolution_type="Approved", comment="Approved for reporting"),
+    )
+
+    assert resolved.status == "Approved"
+    assert client.resolution == ("/tasks/task-43/resolve", {"resolutionType": "Approved", "comment": "Approved for reporting"})
+
+
+@pytest.mark.asyncio
+async def test_non_assignee_cannot_resolve_task(settings):
+    client = ResolveStubClient(settings, {"id": "task-43", "status": "Open", "assignees": [{"id": "user-2"}]})
+
+    with pytest.raises(PermissionError):
+        await OpenMetadataTaskService(client, "user-1").resolve_assigned_task(
+            "task-43", TaskResolutionRequest(resolution_type="Rejected", comment="Not approved"),
+        )

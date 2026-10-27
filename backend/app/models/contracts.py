@@ -47,6 +47,11 @@ class TaskPage(BaseModel):
     total: int | None = None
 
 
+class TaskResolutionRequest(BaseModel):
+    resolution_type: Literal["Approved", "Rejected"]
+    comment: str = Field(min_length=1, max_length=2_000)
+
+
 class AccessRequestDetail(Task):
     table_name: str | None = None
     table_fully_qualified_name: str | None = None
@@ -56,6 +61,8 @@ class AccessRequestDetail(Task):
     access_level: str | None = None
     columns: list[str] = Field(default_factory=list)
     expires_at: datetime | None = None
+    resolution_type: str | None = None
+    resolution_comment: str | None = None
 
 
 class QueryRequest(BaseModel):

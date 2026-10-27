@@ -117,6 +117,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .col-check { width: 40px; padding-right: 0; }
 .col-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--brand); cursor: pointer; }
 .col-task { min-width: 200px; max-width: 320px; }
+.task-reason { min-width: 180px; max-width: 320px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .col-task strong { display: block; font-size: 14px; font-weight: 600; line-height: 20px; }
 .col-task small { display: block; margin-top: 2px; color: var(--text-subtle); font-size: 12px; line-height: 16px; }
 .col-action { width: 1%; text-align: right; }
@@ -168,16 +169,20 @@ tbody tr:last-child td { border-bottom: 0; }
 .request-card__actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .request-card .button-danger { justify-self: start; }
 .request-modal-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; padding: 24px; place-items: center; background: #13242b80; }
-.request-modal { width: min(760px, 100%); max-height: min(760px, calc(100vh - 48px)); overflow: auto; padding: 24px; background: var(--surface); border-radius: 10px; box-shadow: 0 20px 56px #0000004a; }
+.request-modal-shell { position: relative; width: min(760px, 100%); max-height: min(760px, calc(100vh - 48px)); }
+.request-modal { width: 100%; max-height: inherit; overflow-y: scroll; scrollbar-width: none; padding: 24px 40px 24px 24px; background: var(--surface); border-radius: 10px; box-shadow: 0 20px 56px #0000004a; }
+.request-modal::-webkit-scrollbar { display: none; }
+.request-modal__scrollbar { position: absolute; top: 16px; right: 12px; bottom: 16px; width: 10px; cursor: pointer; background: #edf1f3; border-radius: 999px; }
+.request-modal__scrollbar > span { position: absolute; left: 0; display: block; width: 100%; min-height: 28px; background: #8da1aa; border-radius: inherit; }
+.request-modal__scrollbar:hover > span { background: #617880; }
 .request-modal__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
 .request-modal__header h2 { margin: 0; font-size: 22px; }
-.request-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 0; }
-.request-detail-grid > div { min-width: 0; padding: 12px; background: #f7f9fa; border: 1px solid var(--border); border-radius: 6px; }
-.request-detail-grid dt { margin-bottom: 5px; color: var(--text-subtle); font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
-.request-detail-grid dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
-.request-detail-grid dd strong, .request-detail-grid dd code { display: block; }
-.request-detail-grid dd code { margin-top: 4px; color: var(--text-muted); font-family: var(--mono); font-size: 12px; }
-.request-detail-grid__wide { grid-column: 1 / -1; }
+.request-detail-list { margin: 0; border-top: 1px solid var(--border); }
+.request-detail-list > div { display: grid; grid-template-columns: minmax(140px, 30%) minmax(0, 1fr); gap: 14px; min-width: 0; padding: 9px 0; border-bottom: 1px solid var(--border); }
+.request-detail-list dt { color: var(--text-subtle); font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.request-detail-list dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+.request-detail-list dd strong, .request-detail-list dd code { display: block; }
+.request-detail-list dd code { margin-top: 4px; color: var(--text-muted); font-family: var(--mono); font-size: 12px; }
 .access-grants { margin-top: 28px; }
 .access-grants > h2 { margin: 0 0 4px; font-size: 20px; }
 .access-grants > p { color: var(--text-muted); }
@@ -209,6 +214,21 @@ tbody tr:last-child td { border-bottom: 0; }
 .task-card__top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
 .task-card__title { font-size: 15px; line-height: 21px; }
 .task-card__meta { margin: 0; overflow: hidden; color: var(--text-muted); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.task-status { color: #38515a; font-size: 12px; font-weight: 700; }
+.task-card__details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; margin: 0; }
+.task-card__details > div { min-width: 0; }
+.task-card__details dt { margin-bottom: 2px; color: var(--text-subtle); font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.task-card__details dd { margin: 0; color: var(--text); font-size: 13px; overflow-wrap: anywhere; }
+.task-card__detail-wide { grid-column: 1 / -1; }
+.task-card .button-secondary { justify-self: start; }
+.task-modal-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; padding: 24px; place-items: center; background: #13242b80; }
+.task-modal { display: grid; width: min(600px, 100%); max-height: min(680px, calc(100vh - 48px)); gap: 16px; overflow: auto; padding: 24px; background: var(--surface); border-radius: 10px; box-shadow: 0 20px 56px #0000004a; }
+.task-modal__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.task-modal__header h2 { margin: 0; font-size: 22px; }
+.task-modal__summary { margin: -8px 0 0; color: var(--text-muted); }
+.resolution-options { display: flex; flex-wrap: wrap; gap: 10px; }
+.resolution-options label { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 5px; font-size: 13px; font-weight: 600; }
+.resolution-options input { accent-color: var(--brand); }
 
 /* Feedback */
 .alert { padding: 12px 16px; color: #86211f; background: #fbe5e5; border: 1px solid #f3cfce; border-radius: 4px; }
@@ -257,8 +277,9 @@ tbody tr:last-child td { border-bottom: 0; }
   .task-cards { display: grid; }
   .request-table-wrap { display: none; }
   .request-cards { display: grid; }
-  .request-detail-grid { grid-template-columns: 1fr; }
-  .request-detail-grid__wide { grid-column: auto; }
+  .request-detail-list > div { grid-template-columns: 1fr; gap: 5px; }
+  .task-card__details { grid-template-columns: 1fr; }
+  .task-card__detail-wide { grid-column: auto; }
   .card-grid, .card-grid--two { grid-template-columns: 1fr; }
   .catalog-layout { grid-template-columns: 1fr; }
 }

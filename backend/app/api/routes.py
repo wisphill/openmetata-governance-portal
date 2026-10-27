@@ -8,7 +8,7 @@ from app.auth.oidc import OidcClient
 from app.auth.session import Session
 from app.config import Settings, get_settings
 from app.database.oracle import OracleAdapter
-from app.models.contracts import AccessRequestCreate, AccessRequestCreated, AccessRequestDetail, CatalogPage, CatalogTable, GrantedAccessPage, MeResponse, QueryRequest, TaskPage
+from app.models.contracts import AccessRequestCreate, AccessRequestCreated, AccessRequestDetail, CatalogPage, CatalogTable, GrantedAccessPage, MeResponse, QueryRequest, Task, TaskPage, TaskResolutionRequest
 from app.openmetadata.access_requests import OpenMetadataAccessRequestService
 from app.openmetadata.authorization import OpenMetadataAuthorizationService
 from app.openmetadata.catalog import OpenMetadataCatalogService
@@ -108,6 +108,7 @@ async def policies(authz: AuthzDep):
 
 @router.get("/api/tasks", response_model=TaskPage)
 async def tasks(
+    request: Request,
     session: SessionDep,
     authz: AuthzDep,
     settings: SettingsDep,
@@ -122,7 +123,7 @@ async def tasks(
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
     client = OpenMetadataClient(settings)
     try:
-        return await OpenMetadataTaskService(client, user.identity.id).list_tasks(page, page_size, status_filter, task_type)
+        return await OpenMetadataTaskService(client, user.identity.id, request.app.state.user_name_cache).list_tasks(page, page_size, status_filter, task_type)
     finally:
         await client.close()
 
@@ -183,8 +184,26 @@ async def task_by_id(task_id: str, session: SessionDep, settings: SettingsDep):
         await client.close()
 
 
+@router.post("/api/tasks/{task_id}/resolve", response_model=Task)
+async def resolve_task(task_id: str, resolution: TaskResolutionRequest, request: Request, authz: AuthzDep, settings: SettingsDep):
+    try:
+        user = await authz.get_current_user()
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
+    client = OpenMetadataClient(settings)
+    try:
+        return await OpenMetadataTaskService(client, user.identity.id, request.app.state.user_name_cache).resolve_assigned_task(task_id, resolution)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    finally:
+        await client.close()
+
+
 @router.get("/api/requests", response_model=TaskPage)
 async def my_requests(
+    request: Request,
     authz: AuthzDep,
     settings: SettingsDep,
     page: int = Query(1, ge=1),
@@ -196,7 +215,7 @@ async def my_requests(
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
     client = OpenMetadataClient(settings)
     try:
-        return await OpenMetadataTaskService(client, user.identity.id).list_created_tasks(page, page_size)
+        return await OpenMetadataTaskService(client, user.identity.id, request.app.state.user_name_cache).list_created_tasks(page, page_size)
     finally:
         await client.close()
 
@@ -219,14 +238,14 @@ async def cancel_my_request(task_id: str, authz: AuthzDep, settings: SettingsDep
 
 
 @router.get("/api/requests/{task_id}", response_model=AccessRequestDetail)
-async def my_request_detail(task_id: str, authz: AuthzDep, settings: SettingsDep):
+async def my_request_detail(task_id: str, request: Request, authz: AuthzDep, settings: SettingsDep):
     try:
         user = await authz.get_current_user()
     except PermissionError as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
     client = OpenMetadataClient(settings)
     try:
-        return await OpenMetadataTaskService(client, user.identity.id).get_created_task(task_id)
+        return await OpenMetadataTaskService(client, user.identity.id, request.app.state.user_name_cache).get_created_task(task_id)
     except PermissionError as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
     finally:

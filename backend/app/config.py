@@ -35,8 +35,9 @@ class Settings(BaseSettings):
     openmetadata_user_lookup_field: Literal["email", "name"] = "email"
     openmetadata_user_lookup_page_size: int = Field(default=100, ge=1, le=1000)
     openmetadata_user_lookup_max_pages: int = Field(default=100, ge=1, le=1000)
-    openmetadata_tasks_path: str = "/feed"
+    openmetadata_tasks_path: str = "/tasks"
     openmetadata_task_scan_max_pages: int = Field(default=100, ge=1, le=1000)
+    openmetadata_user_name_cache_ttl_seconds: int = Field(default=600, ge=300, le=600)
     # The task endpoint and task type are deployment-version dependent. Keep
     # them server-side rather than exposing OpenMetadata's task shape to users.
     openmetadata_access_request_task_path: str = "/tasks"
