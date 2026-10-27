@@ -7,7 +7,7 @@ import type { TaskPage } from '../types/api'
 import { initials } from '../utils/format'
 import { Skeleton } from './Skeleton'
 
-type IconName = 'tasks' | 'requests' | 'create' | 'access' | 'query' | 'delegation' | 'matrix' | 'catalog' | 'external' | 'menu' | 'chevron'
+type IconName = 'tasks' | 'requests' | 'create' | 'access' | 'userAccess' | 'query' | 'delegation' | 'matrix' | 'catalog' | 'external' | 'menu' | 'chevron'
 
 export function Icon({ name, className = 'nav-icon' }: { name: IconName; className?: string }) {
   const common = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
@@ -16,6 +16,7 @@ export function Icon({ name, className = 'nav-icon' }: { name: IconName; classNa
     requests: <path {...common} d="M21 3 3 10.5l7 2.5m11-10-8 18-3-8m11-10L10 13" />,
     create: <><path {...common} d="M14 3.5H7a1 1 0 0 0-1 1v15a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-12z" /><path {...common} d="M14 3.5v4h4M12 11v6M9 14h6" /></>,
     access: <><circle {...common} cx="8" cy="15" r="4" /><path {...common} d="m11 12 9-9m-4 4 3 3m-5-1 2 2" /></>,
+    userAccess: <><circle {...common} cx="9" cy="8" r="3.5" /><path {...common} d="M3 20a6 6 0 0 1 12 0M17 10v6m-3-3h6" /></>,
     query: <path {...common} d="m4 7 5 5-5 5m8 0h8" />,
     delegation: <><circle {...common} cx="9" cy="8" r="3.5" /><path {...common} d="M3 20a6 6 0 0 1 10.5-4M16 14l3 3-3 3m3-3h-6" /></>,
     matrix: <><circle {...common} cx="6" cy="5" r="2" /><circle {...common} cx="6" cy="19" r="2" /><circle {...common} cx="18" cy="8" r="2" /><path {...common} d="M6 7v10m12-7c0 4-6 3-11.5 7.5" /></>,
@@ -91,6 +92,7 @@ export function Layout() {
     { to: '/requests', icon: 'requests', label: t('myRequests') },
     { to: '/requests/new', icon: 'create', label: t('createRequest') },
     { to: '/access', icon: 'access', label: t('dataAccess') },
+    { to: '/user-access', icon: 'userAccess', label: t('userAccess') },
     { to: '/query', icon: 'query', label: t('query') },
     { to: '/delegations', icon: 'delegation', label: t('delegation') },
     { to: '/authority-matrix', icon: 'matrix', label: t('authorityMatrix') },

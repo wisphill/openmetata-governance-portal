@@ -1,0 +1,16 @@
+{
+  "title": "Query workspace",
+  "description": "Write and format SQL before sending it to the query service.",
+  "prettify": "Prettify SQL",
+  "run": "Run query",
+  "running": "Running…",
+  "editorLabel": "SQL query editor",
+  "results": "Results",
+  "resultsDescription": "The query service response appears here.",
+  "emptyResults": "Run a query to view its result.",
+  "sampleResult": "Sample response",
+  "queryFailed": "We could not run this query.",
+  "formatFailed": "We could not format this SQL.",
+  "rowCount_one": "{{count}} row",
+  "rowCount_other": "{{count}} rows"
+}

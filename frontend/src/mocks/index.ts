@@ -1,4 +1,5 @@
-import type { AccessRequestCreated, CatalogPage, TaskPage } from '../types/api'
+import { ApiError } from '../api/client'
+import type { AccessRequestCreated, CatalogPage, TaskPage, UserAccessAudit } from '../types/api'
 import { mockMe } from './me'
 import { mockTasks } from './tasks'
 
@@ -8,6 +9,10 @@ export async function mockApi<T>(path: string, init?: RequestInit): Promise<T> {
   await new Promise(resolve => setTimeout(resolve, LATENCY_MS))
   const url = new URL(path, window.location.origin)
   if (url.pathname === '/api/me') return mockMe as T
+  if (url.pathname === '/api/users/access') {
+    if (url.searchParams.get('email') === 'missing@example.com') throw new ApiError(404, 'Not found')
+    return { user: mockMe, audited_openmetadata_grants: { items: [{ id: 'grant-1', request_id: 'TASK-00001', table_name: 'CUSTOMER_MASTER', table_fully_qualified_name: 'warehouse.customer.CUSTOMER_MASTER', access_type: 'ColumnLevel', access_level: 'Read', columns: ['warehouse.customer.CUSTOMER_MASTER.EMAIL'], granted_at: '2026-10-20T00:00:00Z', expires_at: '2026-12-01T00:00:00Z' }], total: 1 }, associated_database_account: { account_name: 'om::d2719c8a-6c97-4b35-b662-e791647b41b3', state: 'found', account_status: 'OPEN', created_at: '2026-10-20T00:00:00Z' } } as UserAccessAudit as T
+  }
   if (url.pathname === '/auth/logout' && init?.method === 'POST') return undefined as T
   if (url.pathname === '/api/tasks') {
     const status = url.searchParams.get('status')

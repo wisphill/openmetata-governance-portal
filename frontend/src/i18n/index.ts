@@ -8,6 +8,10 @@ import enRequests from './locales/en/requests.json'
 import viRequests from './locales/vi/requests.json'
 import enGrants from './locales/en/grants.json'
 import viGrants from './locales/vi/grants.json'
+import enQuery from './locales/en/query.json'
+import viQuery from './locales/vi/query.json'
+import enAccessAudit from './locales/en/accessAudit.json'
+import viAccessAudit from './locales/vi/accessAudit.json'
 
-i18n.use(initReactI18next).init({ resources: { en: { common: enCommon, tasks: enTasks, requests: enRequests, grants: enGrants }, vi: { common: viCommon, tasks: viTasks, requests: viRequests, grants: viGrants } }, lng: navigator.language.startsWith('vi') ? 'vi' : 'en', fallbackLng: 'en', ns: ['common', 'tasks', 'requests', 'grants'], defaultNS: 'common', interpolation: { escapeValue: false } })
+i18n.use(initReactI18next).init({ resources: { en: { common: enCommon, tasks: enTasks, requests: enRequests, grants: enGrants, query: enQuery, accessAudit: enAccessAudit }, vi: { common: viCommon, tasks: viTasks, requests: viRequests, grants: viGrants, query: viQuery, accessAudit: viAccessAudit } }, lng: navigator.language.startsWith('vi') ? 'vi' : 'en', fallbackLng: 'en', ns: ['common', 'tasks', 'requests', 'grants', 'query', 'accessAudit'], defaultNS: 'common', interpolation: { escapeValue: false } })
 export default i18n

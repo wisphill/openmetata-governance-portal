@@ -1,0 +1,15 @@
+{
+  "title": "Không gian truy vấn",
+  "description": "Viết và định dạng SQL trước khi gửi đến dịch vụ truy vấn.",
+  "prettify": "Định dạng SQL",
+  "run": "Chạy truy vấn",
+  "running": "Đang chạy…",
+  "editorLabel": "Trình soạn thảo truy vấn SQL",
+  "results": "Kết quả",
+  "resultsDescription": "Phản hồi từ dịch vụ truy vấn sẽ hiển thị tại đây.",
+  "emptyResults": "Hãy chạy truy vấn để xem kết quả.",
+  "sampleResult": "Phản hồi mẫu",
+  "queryFailed": "Không thể chạy truy vấn này.",
+  "formatFailed": "Không thể định dạng SQL này.",
+  "rowCount": "{{count}} dòng"
+}
