@@ -1,11 +1,11 @@
 CONTAINER_ENGINE ?= docker
 IMAGE ?= openmetadata-governance-portal-backend
 TAG ?= dev
-PYTHON ?= python3
+PYTHON ?= $(if $(wildcard .venv311/bin/python),.venv311/bin/python,python3)
 PORT ?= 8000
 ENV_FILE ?= .env
 
-.PHONY: install build test verify run push
+.PHONY: install build test verify run push workflow-bootstrap
 
 install:
 	$(PYTHON) -m pip install -e '.[dev]'
@@ -28,3 +28,6 @@ temp-run:
 
 push:
 	$(CONTAINER_ENGINE) push "$(IMAGE):$(TAG)"
+
+workflow-bootstrap:
+	$(PYTHON) -m scripts.bootstrap_data_access_workflow

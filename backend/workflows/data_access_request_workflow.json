@@ -1,0 +1,118 @@
+{
+  "name": "DataAccessRequestTaskWorkflow",
+  "displayName": "Data Access Request Workflow",
+  "description": "Complete OpenMetadata lifecycle for data access requests: intake, review, approval, grant, expiry, manual revoke, and all terminal outcomes.",
+  "config": {"storeStageStatus": true},
+  "trigger": {"type": "noOp", "config": {}, "output": ["relatedEntity", "updatedBy"]},
+  "nodes": [
+    {"type": "startEvent", "subType": "startEvent", "name": "TaskStart", "displayName": "Task Start"},
+    {
+      "type": "userTask", "subType": "userApprovalTask", "name": "RequestOpen", "displayName": "Request submitted",
+      "config": {
+        "assignees": {"addReviewers": false, "addOwners": true, "candidates": [], "emptyAssigneeStrategy": "assignAdmins"},
+        "approvalThreshold": 1, "rejectionThreshold": 1, "stageId": "open", "stageDisplayName": "Request submitted", "taskStatus": "Open", "assigneeStrategy": "owners",
+        "transitionMetadata": [
+          {"id": "start-review", "label": "Start review", "targetStageId": "in-progress", "targetTaskStatus": "InProgress", "formRef": "start-review", "requiresComment": false},
+          {"id": "cancel", "label": "Cancel", "targetStageId": "cancelled", "targetTaskStatus": "Cancelled", "resolutionType": "Cancelled", "formRef": "cancel", "requiresComment": true},
+          {"id": "fail", "label": "Fail", "targetStageId": "failed", "targetTaskStatus": "Failed", "resolutionType": "TimedOut", "formRef": "fail", "requiresComment": true},
+          {"id": "complete", "label": "Complete", "targetStageId": "completed", "targetTaskStatus": "Completed", "resolutionType": "Completed", "formRef": "complete", "requiresComment": true}
+        ]
+      },
+      "inputNamespaceMap": {"relatedEntity": "global"}
+    },
+    {
+      "type": "userTask", "subType": "userApprovalTask", "name": "ReviewInProgress", "displayName": "Review in progress",
+      "config": {
+        "assignees": {"addReviewers": false, "addOwners": true, "candidates": [], "emptyAssigneeStrategy": "assignAdmins"},
+        "approvalThreshold": 1, "rejectionThreshold": 1, "stageId": "in-progress", "stageDisplayName": "Review in progress", "taskStatus": "InProgress", "assigneeStrategy": "owners",
+        "transitionMetadata": [
+          {"id": "await-approval", "label": "Await approval", "targetStageId": "pending", "targetTaskStatus": "Pending", "formRef": "await-approval", "requiresComment": false},
+          {"id": "reject", "label": "Reject", "targetStageId": "rejected", "targetTaskStatus": "Rejected", "resolutionType": "Rejected", "formRef": "reject", "requiresComment": true},
+          {"id": "cancel", "label": "Cancel", "targetStageId": "cancelled", "targetTaskStatus": "Cancelled", "resolutionType": "Cancelled", "formRef": "cancel", "requiresComment": true},
+          {"id": "fail", "label": "Fail", "targetStageId": "failed", "targetTaskStatus": "Failed", "resolutionType": "TimedOut", "formRef": "fail", "requiresComment": true}
+        ]
+      },
+      "inputNamespaceMap": {"relatedEntity": "global"}
+    },
+    {
+      "type": "userTask", "subType": "userApprovalTask", "name": "ApprovalPending", "displayName": "Approval pending",
+      "config": {
+        "assignees": {"addReviewers": false, "addOwners": true, "candidates": [], "emptyAssigneeStrategy": "assignAdmins"},
+        "approvalThreshold": 1, "rejectionThreshold": 1, "stageId": "pending", "stageDisplayName": "Approval pending", "taskStatus": "Pending", "assigneeStrategy": "owners",
+        "transitionMetadata": [
+          {"id": "approve", "label": "Approve", "targetStageId": "approved", "targetTaskStatus": "Approved", "formRef": "approve", "requiresComment": false},
+          {"id": "reject", "label": "Reject", "targetStageId": "rejected", "targetTaskStatus": "Rejected", "resolutionType": "Rejected", "formRef": "reject", "requiresComment": true},
+          {"id": "cancel", "label": "Cancel", "targetStageId": "cancelled", "targetTaskStatus": "Cancelled", "resolutionType": "Cancelled", "formRef": "cancel", "requiresComment": true},
+          {"id": "fail", "label": "Fail", "targetStageId": "failed", "targetTaskStatus": "Failed", "resolutionType": "TimedOut", "formRef": "fail", "requiresComment": true}
+        ]
+      },
+      "inputNamespaceMap": {"relatedEntity": "global"}
+    },
+    {
+      "type": "userTask", "subType": "userApprovalTask", "name": "AccessApproved", "displayName": "Access approved",
+      "config": {
+        "assignees": {"addReviewers": false, "addOwners": true, "candidates": [], "emptyAssigneeStrategy": "assignAdmins"},
+        "approvalThreshold": 1, "rejectionThreshold": 1, "stageId": "approved", "stageDisplayName": "Access approved", "taskStatus": "Approved", "assigneeStrategy": "owners",
+        "transitionMetadata": [
+          {"id": "confirm-provisioned", "label": "Confirm provisioned", "targetStageId": "granted", "targetTaskStatus": "Granted", "formRef": "confirm-provisioned", "requiresComment": false},
+          {"id": "fail", "label": "Provisioning failed", "targetStageId": "failed", "targetTaskStatus": "Failed", "resolutionType": "TimedOut", "formRef": "fail", "requiresComment": true}
+        ]
+      },
+      "inputNamespaceMap": {"relatedEntity": "global"}
+    },
+    {
+      "type": "userTask", "subType": "userApprovalTask", "name": "AccessGranted", "displayName": "Access granted",
+      "config": {
+        "assignees": {"addReviewers": false, "addOwners": true, "candidates": [], "emptyAssigneeStrategy": "assignAdmins"},
+        "approvalThreshold": 1, "rejectionThreshold": 1, "stageId": "granted", "stageDisplayName": "Access granted", "taskStatus": "Granted", "assigneeStrategy": "owners",
+        "expiryTimer": {"dateVariable": "taskPayloadExpirationDate", "transitionId": "expire", "closeAsResolution": "Expired"},
+        "transitionMetadata": [
+          {"id": "manual-revoke", "label": "Start manual revocation", "targetStageId": "manual-revoke", "targetTaskStatus": "ManualRevoke", "formRef": "manual-revoke", "requiresComment": true},
+          {"id": "expire", "label": "Expire", "targetStageId": "expired", "targetTaskStatus": "Expired", "resolutionType": "Expired", "formRef": "expire", "requiresComment": false},
+          {"id": "complete", "label": "Complete", "targetStageId": "completed", "targetTaskStatus": "Completed", "resolutionType": "Completed", "formRef": "complete", "requiresComment": true}
+        ]
+      },
+      "inputNamespaceMap": {"relatedEntity": "global"}
+    },
+    {
+      "type": "userTask", "subType": "userApprovalTask", "name": "ManualRevocation", "displayName": "Manual revocation",
+      "config": {
+        "assignees": {"addReviewers": false, "addOwners": true, "candidates": [], "emptyAssigneeStrategy": "assignAdmins"},
+        "approvalThreshold": 1, "rejectionThreshold": 1, "stageId": "manual-revoke", "stageDisplayName": "Manual revocation", "taskStatus": "ManualRevoke", "assigneeStrategy": "owners",
+        "transitionMetadata": [
+          {"id": "revoke", "label": "Confirm revoked", "targetStageId": "revoked", "targetTaskStatus": "Revoked", "resolutionType": "Revoked", "formRef": "revoke", "requiresComment": true},
+          {"id": "fail", "label": "Revocation failed", "targetStageId": "failed", "targetTaskStatus": "Failed", "resolutionType": "TimedOut", "formRef": "fail", "requiresComment": true}
+        ]
+      },
+      "inputNamespaceMap": {"relatedEntity": "global"}
+    },
+    {"type": "endEvent", "subType": "endEvent", "name": "RejectedEnd", "displayName": "Rejected"},
+    {"type": "endEvent", "subType": "endEvent", "name": "CancelledEnd", "displayName": "Cancelled"},
+    {"type": "endEvent", "subType": "endEvent", "name": "FailedEnd", "displayName": "Failed"},
+    {"type": "endEvent", "subType": "endEvent", "name": "CompletedEnd", "displayName": "Completed"},
+    {"type": "endEvent", "subType": "endEvent", "name": "RevokedEnd", "displayName": "Revoked"},
+    {"type": "endEvent", "subType": "endEvent", "name": "ExpiredEnd", "displayName": "Expired"}
+  ],
+  "edges": [
+    {"from": "TaskStart", "to": "RequestOpen"},
+    {"from": "RequestOpen", "to": "ReviewInProgress", "condition": "start-review"},
+    {"from": "RequestOpen", "to": "CancelledEnd", "condition": "cancel"},
+    {"from": "RequestOpen", "to": "FailedEnd", "condition": "fail"},
+    {"from": "RequestOpen", "to": "CompletedEnd", "condition": "complete"},
+    {"from": "ReviewInProgress", "to": "ApprovalPending", "condition": "await-approval"},
+    {"from": "ReviewInProgress", "to": "RejectedEnd", "condition": "reject"},
+    {"from": "ReviewInProgress", "to": "CancelledEnd", "condition": "cancel"},
+    {"from": "ReviewInProgress", "to": "FailedEnd", "condition": "fail"},
+    {"from": "ApprovalPending", "to": "AccessApproved", "condition": "approve"},
+    {"from": "ApprovalPending", "to": "RejectedEnd", "condition": "reject"},
+    {"from": "ApprovalPending", "to": "CancelledEnd", "condition": "cancel"},
+    {"from": "ApprovalPending", "to": "FailedEnd", "condition": "fail"},
+    {"from": "AccessApproved", "to": "AccessGranted", "condition": "confirm-provisioned"},
+    {"from": "AccessApproved", "to": "FailedEnd", "condition": "fail"},
+    {"from": "AccessGranted", "to": "ManualRevocation", "condition": "manual-revoke"},
+    {"from": "AccessGranted", "to": "ExpiredEnd", "condition": "expire"},
+    {"from": "AccessGranted", "to": "CompletedEnd", "condition": "complete"},
+    {"from": "ManualRevocation", "to": "RevokedEnd", "condition": "revoke"},
+    {"from": "ManualRevocation", "to": "FailedEnd", "condition": "fail"}
+  ]
+}

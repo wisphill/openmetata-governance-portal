@@ -69,3 +69,18 @@ async def test_post_sends_explicit_revoked_transition_to_openmetadata_task_workf
         await client.close()
 
     assert task["status"] == "Revoked"
+
+
+@pytest.mark.asyncio
+async def test_delete_passes_openmetadata_hard_delete_parameter(settings):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "DELETE"
+        assert request.url.path == "/api/v1/tasks/task-1"
+        assert request.url.params["hardDelete"] == "true"
+        return httpx.Response(200, request=request)
+
+    client = OpenMetadataClient(settings, transport=httpx.MockTransport(handler))
+    try:
+        await client.delete("/tasks/task-1", {"hardDelete": "true"})
+    finally:
+        await client.close()

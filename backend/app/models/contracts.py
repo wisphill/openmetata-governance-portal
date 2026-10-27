@@ -159,6 +159,11 @@ class AccessRevocation(BaseModel):
     database_revoke_state: Literal["revoked", "skipped"]
 
 
+class HardDeletedTask(BaseModel):
+    task_id: str
+    hard_deleted: Literal[True] = True
+
+
 class UserAccessAudit(BaseModel):
     """A read-only access view for a user resolved from OpenMetadata."""
 

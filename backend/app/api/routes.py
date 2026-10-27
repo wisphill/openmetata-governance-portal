@@ -11,7 +11,7 @@ from app.config import Settings, get_settings
 from app.database.oracle import OracleAdapter
 from app.database.oracle_access_provisioning import OracleAccessProvisioner
 from app.database.oracle_temporary_proxy import OracleTemporaryProxyQueryService
-from app.models.contracts import AccessRequestCreate, AccessRequestCreated, AccessRequestDetail, AccessRevocation, CatalogPage, CatalogTable, GrantedAccessPage, MeResponse, QueryRequest, QueryResult, Task, TaskPage, TaskResolutionRequest, UserAccessAudit
+from app.models.contracts import AccessRequestCreate, AccessRequestCreated, AccessRequestDetail, AccessRevocation, CatalogPage, CatalogTable, GrantedAccessPage, HardDeletedTask, MeResponse, QueryRequest, QueryResult, Task, TaskPage, TaskResolutionRequest, UserAccessAudit
 from app.openmetadata.access_requests import OpenMetadataAccessRequestService
 from app.openmetadata.authorization import OpenMetadataAuthorizationService
 from app.openmetadata.catalog import OpenMetadataCatalogService
@@ -331,7 +331,44 @@ async def revoke_user_access_grant(user_id: str, grant_id: str, authz: AuthzDep,
             ),
             None,
         )
+        # The complete DataAccessRequest workflow intentionally records a
+        # non-terminal ManualRevoke stage before it closes as Revoked. Advance
+        # through that stage so OM retains both audit events, then resolve the
+        # terminal Revoked transition.
         if not revoke_transition:
+            manual_revoke_transition = next(
+                (
+                    transition for transition in transitions
+                    if isinstance(transition, dict)
+                    and transition.get("id") == "manual-revoke"
+                    and transition.get("targetTaskStatus") == "ManualRevoke"
+                ),
+                None,
+            )
+            if manual_revoke_transition:
+                task = await client.post(
+                    f"{settings.openmetadata_access_request_task_path.rstrip('/')}/{grant_id}/resolve",
+                    {
+                        "transitionId": manual_revoke_transition["id"],
+                        "comment": "Manual revocation started by a portal administrator.",
+                    },
+                )
+                transitions = task.get("availableTransitions") if isinstance(task.get("availableTransitions"), list) else []
+                revoke_transition = next(
+                    (
+                        transition for transition in transitions
+                        if isinstance(transition, dict)
+                        and transition.get("resolutionType") == "Revoked"
+                        and isinstance(transition.get("id"), str)
+                    ),
+                    None,
+                )
+        if not revoke_transition:
+            if task.get("workflowStageId") == "workflow-start-failed":
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "OpenMetadata could not start this grant's workflow. This existing task has no lifecycle transition; permanently delete it and create a new request after applying the workflow bootstrap.",
+                )
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 "OpenMetadata does not expose a revoke transition for this grant. Configure a DataAccessRequest workflow with an Approved/Granted-to-Revoked transition.",
@@ -370,6 +407,26 @@ async def revoke_user_access_grant(user_id: str, grant_id: str, authz: AuthzDep,
         openmetadata_state="revoked",
         database_revoke_state=database_revoke_state,
     )
+
+
+@router.delete("/api/users/access/{user_id}/grants/{grant_id}/hard-delete", response_model=HardDeletedTask)
+async def hard_delete_user_access_task(user_id: str, grant_id: str, authz: AuthzDep, settings: SettingsDep):
+    """Permanently delete one portal-managed access task; admin only."""
+    actor = await authz.get_current_user()
+    if not actor.is_admin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only OpenMetadata administrators can permanently delete portal-managed access tasks")
+    client = OpenMetadataClient(settings)
+    try:
+        task = await client.get(f"{settings.openmetadata_access_request_task_path.rstrip('/')}/{grant_id}")
+        if not str(task.get("name", "")).startswith(f"portal-access-{user_id}-"):
+            raise HTTPException(status.HTTP_409_CONFLICT, "This task is not managed by the portal for the selected user")
+        await client.delete(
+            f"{settings.openmetadata_access_request_task_path.rstrip('/')}/{grant_id}",
+            {"hardDelete": "true"},
+        )
+    finally:
+        await client.close()
+    return HardDeletedTask(task_id=grant_id)
 
 
 @router.post("/api/database/query")

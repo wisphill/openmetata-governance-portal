@@ -75,5 +75,22 @@ class OpenMetadataClient:
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OpenMetadata request update failed")
         return response.json()
 
+    async def delete(self, path: str, params: dict | None = None) -> None:
+        try:
+            response = await self._client.delete(path, params=params)
+        except httpx.TimeoutException as exc:
+            raise HTTPException(status.HTTP_504_GATEWAY_TIMEOUT, "OpenMetadata request timed out") from exc
+        except httpx.RequestError as exc:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OpenMetadata request was unavailable") from exc
+        if response.status_code in (400, 401, 403, 404, 409, 422, 429):
+            try:
+                upstream = response.json()
+            except ValueError:
+                upstream = {}
+            detail = upstream.get("message") or upstream.get("detail") or "OpenMetadata rejected the delete request"
+            raise HTTPException(response.status_code, str(detail))
+        if response.is_error:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OpenMetadata delete request failed")
+
     async def close(self) -> None:
         await self._client.aclose()
