@@ -27,6 +27,7 @@ async def test_access_request_uses_bot_token_and_table_owner(settings):
         assert body["category"] == "DataAccess"
         assert body["about"] == "<#E::table::warehouse.public.customers>"
         assert body["assignees"] == ["CustomerOwners"]
+        assert body["reviewers"] == ["CustomerOwners"]
         assert body["payload"]["accessType"] == "ColumnLevel"
         assert body["payload"]["columns"] == ["email"]
         assert body["payload"]["requestedAccess"] == "Read"

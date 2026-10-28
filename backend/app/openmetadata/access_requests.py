@@ -11,7 +11,7 @@ from app.openmetadata.client import OpenMetadataClient
 
 
 class OpenMetadataAccessRequestService:
-    """Creates a task assigned to the selected table's OpenMetadata owner(s)."""
+    """Creates a data-access task whose reviewers approve every workflow step."""
 
     def __init__(self, client: OpenMetadataClient, settings: Settings) -> None:
         self.client = client
@@ -33,10 +33,12 @@ class OpenMetadataAccessRequestService:
     def _task_payload(self, requester: Identity, table: CatalogTable, owners: list[CatalogOwner], request: AccessRequestCreate) -> dict[str, Any]:
         columns = [column for column in table.columns if column.id in request.column_ids]
         table_fqn = table.fully_qualified_name or table.name
-        assignees = [owner.fully_qualified_name or owner.name for owner in owners]
-        if not all(assignees):
+        reviewers = [owner.fully_qualified_name or owner.name for owner in owners]
+        if not all(reviewers):
             raise HTTPException(status.HTTP_409_CONFLICT, "A data owner is missing an OpenMetadata fully qualified name")
-        # The approving user/team is derived only from OpenMetadata's owner field.
+        # The workflow resolves approvers from task.reviewers, never dynamically
+        # from table owners. At creation time the owning team is copied into that
+        # explicit reviewer list so every later stage uses the same approvers.
         expiration = datetime.now(timezone.utc) + timedelta(days=self.settings.openmetadata_access_request_expiration_days)
         return {
             # Task payload is validated against OpenMetadata's task form and
@@ -46,7 +48,8 @@ class OpenMetadataAccessRequestService:
             "category": "DataAccess",
             "type": self.settings.openmetadata_access_request_task_type,
             "about": f"<#E::table::{table_fqn}>",
-            "assignees": assignees,
+            "assignees": reviewers,
+            "reviewers": reviewers,
             "payload": {
                 "accessType": "ColumnLevel" if columns else "FullAccess",
                 "columns": [column.name for column in columns],

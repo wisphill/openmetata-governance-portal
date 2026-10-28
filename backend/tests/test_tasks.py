@@ -142,23 +142,31 @@ class ResolveStubClient:
     def __init__(self, settings, task):
         self.settings = settings
         self.task = task
-        self.resolution = None
+        self.resolutions = []
 
     async def get(self, path, params=None):
         return self.task
 
     async def post(self, path, payload):
-        self.resolution = (path, payload)
+        self.resolutions.append((path, payload))
+        transition = payload.get("transitionId")
+        if transition == "approve":
+            return {**self.task, "status": "Approved", "availableTransitions": [{"id": "grant"}, {"id": "fail"}]}
+        if transition == "grant":
+            return {**self.task, "status": "Granted"}
+        if transition == "reject":
+            return {**self.task, "status": "Rejected"}
         return {**self.task, "status": payload["resolutionType"]}
 
 
 @pytest.mark.asyncio
 async def test_assignee_can_resolve_task_with_comment(settings, monkeypatch):
     client = ResolveStubClient(settings, {
-        "id": "task-43", "type": settings.openmetadata_access_request_task_type, "status": "Open", "createdById": "d2719c8a-6c97-4b35-b662-e791647b41b3",
+        "id": "task-43", "type": settings.openmetadata_access_request_task_type, "status": "Pending", "createdById": "d2719c8a-6c97-4b35-b662-e791647b41b3",
         "assignees": [{"id": "user-1"}],
         "about": {"fullyQualifiedName": "oracle.freepdb1.app.ORDERS"},
         "payload": {"accessType": "FullAccess", "columns": []},
+        "availableTransitions": [{"id": "approve"}, {"id": "reject"}],
     })
     grants = []
 
@@ -172,8 +180,11 @@ async def test_assignee_can_resolve_task_with_comment(settings, monkeypatch):
         "task-43", TaskResolutionRequest(resolution_type="Approved", comment="Approved for reporting"),
     )
 
-    assert resolved.status == "Approved"
-    assert client.resolution == ("/tasks/task-43/resolve", {"resolutionType": "Approved", "comment": "Approved for reporting"})
+    assert resolved.status == "Granted"
+    assert client.resolutions == [
+        ("/tasks/task-43/resolve", {"transitionId": "approve", "comment": "Approved for reporting"}),
+        ("/tasks/task-43/resolve", {"transitionId": "grant", "comment": "Oracle access provisioned by the portal."}),
+    ]
     assert grants == [("d2719c8a-6c97-4b35-b662-e791647b41b3", "app", "ORDERS")]
 
 

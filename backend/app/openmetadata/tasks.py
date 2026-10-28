@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import datetime, timezone
 from fastapi import HTTPException
 
@@ -7,6 +8,9 @@ from app.config import Settings
 from app.database.oracle_access_provisioning import OracleAccessProvisioner
 from app.models.contracts import AccessRequestDetail, Task, TaskPage, TaskResolutionRequest
 from app.openmetadata.client import OpenMetadataClient
+
+
+logger = logging.getLogger(__name__)
 
 
 class OpenMetadataTaskService:
@@ -23,29 +27,27 @@ class OpenMetadataTaskService:
         releases but silently ignores it on others. Scan its bounded pagination
         and apply the identity filter server-side so no unrelated task is exposed.
         """
-        after: str | None = None
         matches: list[dict] = []
-        for _ in range(self.client.settings.openmetadata_task_scan_max_pages):
-            # Only actionable tasks belong in an approver's work queue. Apply
-            # this at the OpenMetadata API boundary, not just in the UI.
-            params = {"limit": 100, "fields": "assignees,about,createdBy,payload", "status": "Open"}
-            if after:
-                params["after"] = after
-            payload = await self.client.get(self.client.settings.openmetadata_tasks_path, params)
-            raw_items = payload.get("data", payload.get("tasks", []))
-            for item in raw_items:
-                if not self._is_assigned_to_current_user(item):
-                    continue
-                if item.get("status") != "Open":
-                    continue
-                if status_filter and item.get("status") != status_filter:
-                    continue
-                if task_type and (item.get("taskType") or item.get("type")) != task_type:
-                    continue
-                matches.append(item)
-            after = payload.get("paging", {}).get("after")
-            if not after:
-                break
+        actionable_statuses = (status_filter,) if status_filter else ("Open", "InProgress", "Pending")
+        for actionable_status in actionable_statuses:
+            after: str | None = None
+            for _ in range(self.client.settings.openmetadata_task_scan_max_pages):
+                # Only actionable tasks belong in an approver's work queue. Apply
+                # this at the OpenMetadata API boundary, not just in the UI.
+                params = {"limit": 100, "fields": "assignees,reviewers,about,createdBy,payload", "status": actionable_status}
+                if after:
+                    params["after"] = after
+                payload = await self.client.get(self.client.settings.openmetadata_tasks_path, params)
+                raw_items = payload.get("data", payload.get("tasks", []))
+                for item in raw_items:
+                    if not self._is_assigned_to_current_user(item) or item.get("status") != actionable_status:
+                        continue
+                    if task_type and (item.get("taskType") or item.get("type")) != task_type:
+                        continue
+                    matches.append(item)
+                after = payload.get("paging", {}).get("after")
+                if not after:
+                    break
         requester_names = await self._requester_names(matches)
         tasks = [self._normalize(item, requester_names.get(self._requester_id(item))) for item in matches]
         start = (page - 1) * page_size
@@ -87,27 +89,79 @@ class OpenMetadataTaskService:
         await self.client.post(f"{self.client.settings.openmetadata_access_request_task_path.rstrip('/')}/{task_id}/close", {})
 
     async def resolve_assigned_task(self, task_id: str, resolution: TaskResolutionRequest) -> Task:
-        task = await self.client.get(f"{self.client.settings.openmetadata_access_request_task_path.rstrip('/')}/{task_id}")
+        task = await self.client.get(
+            f"{self.client.settings.openmetadata_access_request_task_path.rstrip('/')}/{task_id}",
+            {"fields": "availableTransitions,about,payload,assignees,reviewers"},
+        )
         if not self._is_assigned_to_current_user(task):
             raise PermissionError("You can only resolve tasks assigned to you")
         if str(task.get("status", "")).lower() not in {"open", "inprogress", "pending"}:
             raise ValueError("This task can no longer be resolved")
-        provision_oracle_access = (
-            resolution.resolution_type == "Approved"
-            and (task.get("taskType") or task.get("type")) == self.client.settings.openmetadata_access_request_task_type
-        )
-        grant_target = self._oracle_grant_target(task) if provision_oracle_access else None
+        is_data_access_request = (task.get("taskType") or task.get("type")) == self.client.settings.openmetadata_access_request_task_type
+        if is_data_access_request and str(task.get("status", "")).lower() == "pending":
+            return await self._resolve_data_access_review(task_id, task, resolution)
         resolved = await self.client.post(
             f"{self.client.settings.openmetadata_access_request_task_path.rstrip('/')}/{task_id}/resolve",
             {"resolutionType": resolution.resolution_type, "comment": resolution.comment},
         )
-        if provision_oracle_access:
-            if self.settings is None:
-                raise RuntimeError("Oracle access provisioning settings are required")
-            requester_id, schema, table = grant_target
-            await OracleAccessProvisioner(self.settings).grant_select(requester_id, schema, table)
         requester_names = await self._requester_names([resolved])
         return self._normalize(resolved, requester_names.get(self._requester_id(resolved)))
+
+    async def _resolve_data_access_review(self, task_id: str, task: dict, resolution: TaskResolutionRequest) -> Task:
+        """Advance the simple Pending → Approved → Granted workflow.
+
+        The reviewer makes the sole approval decision. The portal then records
+        the provisioning result as a workflow transition; reviewers never need
+        to approve a second time merely to acknowledge database automation.
+        """
+        if resolution.resolution_type == "Rejected":
+            resolved = await self._resolve_transition(task_id, task, "reject", resolution.comment, "Rejected")
+        else:
+            approved = await self._resolve_transition(task_id, task, "approve", resolution.comment)
+            grant_target = self._oracle_grant_target(task)
+            if self.settings is None:
+                raise RuntimeError("Oracle access provisioning settings are required")
+            try:
+                requester_id, schema, table = grant_target
+                await OracleAccessProvisioner(self.settings).grant_select(requester_id, schema, table)
+            except Exception:
+                # A failed database grant is an auditable OM workflow outcome.
+                logger.exception("Oracle provisioning failed for data-access task %s", task_id)
+                resolved = await self._resolve_transition(
+                    task_id,
+                    approved,
+                    "fail",
+                    "Oracle provisioning failed; see portal service logs for diagnostics.",
+                    "TimedOut",
+                )
+            else:
+                resolved = await self._resolve_transition(
+                    task_id,
+                    approved,
+                    "grant",
+                    "Oracle access provisioned by the portal.",
+                )
+        requester_names = await self._requester_names([resolved])
+        return self._normalize(resolved, requester_names.get(self._requester_id(resolved)))
+
+    async def _resolve_transition(
+        self,
+        task_id: str,
+        task: dict,
+        transition_id: str,
+        comment: str,
+        resolution_type: str | None = None,
+    ) -> dict:
+        transitions = task.get("availableTransitions") if isinstance(task.get("availableTransitions"), list) else []
+        if not any(isinstance(item, dict) and item.get("id") == transition_id for item in transitions):
+            raise ValueError(f"OpenMetadata does not expose the '{transition_id}' transition for this task")
+        payload = {"transitionId": transition_id, "comment": comment}
+        if resolution_type:
+            payload["resolutionType"] = resolution_type
+        return await self.client.post(
+            f"{self.client.settings.openmetadata_access_request_task_path.rstrip('/')}/{task_id}/resolve",
+            payload,
+        )
 
     def _oracle_grant_target(self, task: dict) -> tuple[str, str, str]:
         """Return the trusted requester and table identified by the OM task."""
