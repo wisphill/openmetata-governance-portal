@@ -42,7 +42,10 @@ class Settings(BaseSettings):
     # them server-side rather than exposing OpenMetadata's task shape to users.
     openmetadata_access_request_task_path: str = "/tasks"
     openmetadata_access_request_task_type: str = "DataAccessRequest"
-    openmetadata_data_product_publication_task_type: str = "DataProductPublication"
+    # OpenMetadata only accepts its built-in task-type enum. Publication tasks
+    # use DataProductPublication and are distinguished by their portal-managed name prefix.
+    openmetadata_data_product_publication_task_type: str = "TagUpdate"
+    openmetadata_data_product_published_tag: str = "DataProduct.Published"
     openmetadata_access_request_expiration_days: int = Field(default=30, ge=1, le=365)
     openmetadata_catalog_page_size: int = Field(default=20, ge=1, le=100)
     openmetadata_timeout_seconds: float = 10

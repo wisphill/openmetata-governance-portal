@@ -141,6 +141,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .button-primary:hover:not(:disabled) { background: var(--brand-dark); }
 .button-primary:disabled { opacity: .55; cursor: not-allowed; }
 .page-action { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 8px; text-decoration: none; white-space: nowrap; }
+.pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 16px; color: var(--text-muted); font-size: 14px; }
 .create-request-button > span { display: inline-grid; width: 18px; height: 18px; place-items: center; border: 1px solid currentColor; border-radius: 50%; font-size: 16px; font-weight: 400; line-height: 1; }
 .button-danger { min-height: 32px; padding: 0 12px; color: var(--danger); background: #fff; border: 1px solid #dc8c86; border-radius: 4px; font-size: 13px; font-weight: 600; white-space: nowrap; }
 .button-danger:hover:not(:disabled) { background: #fbeeed; border-color: var(--danger); }

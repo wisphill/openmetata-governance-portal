@@ -11,8 +11,8 @@ class OpenMetadataCatalogService:
 
     A physical table is a source asset, even if it happens to have an owner or
     classification.  It must never be offered as an access-request target.
-    The request catalogue therefore admits only views that are explicitly
-    linked to an OpenMetadata Data Product; a technical view is not enough.
+    The request catalogue admits only Views marked with the governed
+    ``DataProduct.Published`` tag; tables and Materialized Views remain internal.
     """
 
     # The deployed OpenMetadata instance exposes table owners as `owners`.
@@ -72,25 +72,27 @@ class OpenMetadataCatalogService:
     @staticmethod
     def is_requestable_data_product_view(table: dict[str, Any]) -> bool:
         """Whether OM explicitly identifies this table as a published product view."""
-        table_type = str(table.get("tableType") or table.get("table_type") or "").casefold()
-        data_products = table.get("dataProducts") or table.get("dataProduct")
-        return table_type == "view" and isinstance(data_products, list) and any(
-            isinstance(product, dict) and (product.get("id") or product.get("fullyQualifiedName") or product.get("name"))
-            for product in data_products
-        )
+        return OpenMetadataCatalogService._is_view(table) and OpenMetadataCatalogService._has_published_tag(table)
 
     @staticmethod
     def is_publishable_view(table: dict[str, Any]) -> bool:
+        return OpenMetadataCatalogService._is_view(table) and not OpenMetadataCatalogService._has_published_tag(table)
+
+    @staticmethod
+    def _is_view(table: dict[str, Any]) -> bool:
         table_type = str(table.get("tableType") or table.get("table_type") or "").casefold()
-        data_products = table.get("dataProducts") or table.get("dataProduct")
-        return table_type == "view" and not data_products
+        return table_type == "view"
+
+    @staticmethod
+    def _has_published_tag(table: dict[str, Any]) -> bool:
+        return any(isinstance(tag, dict) and tag.get("tagFQN") == "DataProduct.Published" for tag in table.get("tags", []))
 
     @classmethod
     def require_requestable_data_product_view(cls, table: dict[str, Any]) -> None:
         if not cls.is_requestable_data_product_view(table):
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
-                "Only published Data Product views can be requested; source tables and technical views are excluded",
+                "Only published Data Product Views can be requested; tables and Materialized Views are excluded",
             )
 
     @staticmethod

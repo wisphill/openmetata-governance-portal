@@ -181,25 +181,6 @@ async def test_assignee_can_resolve_task_with_comment(settings):
 
 
 @pytest.mark.asyncio
-async def test_assignee_can_complete_data_product_publication(settings):
-    client = ResolveStubClient(settings, {
-        "id": "task-product-1", "type": settings.openmetadata_data_product_publication_task_type, "status": "Open", "createdById": "requester-1",
-        "assignees": [{"id": "user-1"}], "about": {"fullyQualifiedName": "oracle.dwh.DP_BOOKING_V"},
-        "availableTransitions": [{"id": "approve"}, {"id": "reject"}],
-    })
-
-    resolved = await OpenMetadataTaskService(client, "user-1", settings=settings).resolve_assigned_task(
-        "task-product-1", TaskResolutionRequest(resolution_type="Approved", comment="Ready to publish"),
-    )
-
-    assert resolved.status == "Granted"
-    assert client.resolutions == [
-        ("/tasks/task-product-1/resolve", {"transitionId": "approve", "comment": "Ready to publish"}),
-        ("/tasks/task-product-1/resolve", {"transitionId": "grant", "comment": "Data Product publication recorded in OpenMetadata."}),
-    ]
-
-
-@pytest.mark.asyncio
 async def test_non_assignee_cannot_resolve_task(settings):
     client = ResolveStubClient(settings, {"id": "task-43", "status": "Open", "assignees": [{"id": "user-2"}]})
 

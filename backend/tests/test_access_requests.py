@@ -19,7 +19,7 @@ async def test_access_request_uses_bot_token_and_table_owner(settings):
         if request.method == "GET":
             return httpx.Response(200, json={
                 "id": "table-1", "name": "customers", "fullyQualifiedName": "warehouse.public.customers",
-                "tableType": "View", "dataProducts": [{"id": "product-1", "fullyQualifiedName": "CustomerAnalytics"}],
+                "tableType": "View", "tags": [{"tagFQN": "DataProduct.Published"}],
                 "owners": [{"id": "owner-team", "type": "team", "name": "CustomerOwners", "fullyQualifiedName": "CustomerOwners"}],
                 "columns": [{"name": "email", "dataType": "VARCHAR"}],
             })
@@ -54,7 +54,7 @@ async def test_access_request_rejects_columns_not_on_the_selected_table(settings
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={
             "id": "table-1", "name": "customers",
-            "tableType": "View", "dataProducts": [{"id": "product-1"}],
+            "tableType": "View", "tags": [{"tagFQN": "DataProduct.Published"}],
             "owners": [{"id": "owner-team", "type": "team", "fullyQualifiedName": "CustomerOwners"}], "columns": [{"name": "email"}],
         })
 

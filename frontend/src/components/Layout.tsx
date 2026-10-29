@@ -91,6 +91,7 @@ export function Layout() {
     { to: '/tasks', icon: 'tasks', label: t('tasks'), badge: taskCount },
     { to: '/requests', icon: 'requests', label: t('myRequests') },
     { to: '/requests/new', icon: 'create', label: t('createRequest') },
+    { to: '/data-products', icon: 'catalog', label: 'Data Products' },
     { to: '/access', icon: 'access', label: t('dataAccess') },
     { to: '/user-access', icon: 'userAccess', label: t('userAccess') },
     { to: '/query', icon: 'query', label: t('query') },

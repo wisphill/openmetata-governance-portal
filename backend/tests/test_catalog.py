@@ -16,7 +16,7 @@ async def test_catalog_skips_source_tables_and_technical_views(settings):
         if calls == 1:
             return httpx.Response(200, json={
                 "data": [
-                    {"id": "source-1", "name": "BOOKING", "tableType": "Regular", "dataProducts": [{"id": "product-1"}]},
+                    {"id": "source-1", "name": "BOOKING", "tableType": "Regular", "tags": [{"tagFQN": "DataProduct.Published"}]},
                     {"id": "technical-view", "name": "BOOKING_INTERNAL_V", "tableType": "View", "dataProducts": []},
                 ],
                 "paging": {"after": "next-page"},
@@ -24,7 +24,7 @@ async def test_catalog_skips_source_tables_and_technical_views(settings):
         return httpx.Response(200, json={
             "data": [{
                 "id": "product-view", "name": "DP_BOOKING_ANALYTICS_V", "tableType": "View",
-                "dataProducts": [{"id": "product-1", "fullyQualifiedName": "BookingAnalytics"}],
+                    "tags": [{"tagFQN": "DataProduct.Published"}],
                 "columns": [],
             }],
             "paging": {},

@@ -47,35 +47,37 @@ class OpenMetadataTaskService:
         return TaskPage(items=tasks[start:start + page_size], page=page, page_size=page_size, total=len(tasks))
 
     async def list_created_tasks(self, page: int, page_size: int) -> TaskPage:
-        """List tasks submitted through the portal by this authenticated user."""
-        after: str | None = None
+        """List every portal request submitted by the authenticated user.
+
+        OM's list endpoint supports cursor pagination but not a multi-type
+        query. Fetch each portal-owned task family, combine them, and paginate
+        the stable newest-first result returned to the browser.
+        """
         matches: list[dict] = []
-        for _ in range(self.client.settings.openmetadata_task_scan_max_pages):
-            params = {
-                "limit": 100,
-                "fields": "about,createdBy,payload,assignees",
-                "type": self.client.settings.openmetadata_access_request_task_type,
-                "q": f"portal-access-{self.user_id}",
-            }
-            if after:
-                params["after"] = after
-            payload = await self.client.get(self.client.settings.openmetadata_access_request_task_path, params)
-            raw_items = payload.get("data", payload.get("tasks", []))
-            matches.extend(item for item in raw_items if str(item.get("name", "")).startswith(f"portal-access-{self.user_id}-"))
-            after = payload.get("paging", {}).get("after")
-            if not after:
-                break
+        for task_type, prefix in self._portal_request_types():
+            after: str | None = None
+            for _ in range(self.client.settings.openmetadata_task_scan_max_pages):
+                params = {"limit": 100, "fields": "about,createdBy,payload,assignees", "type": task_type, "q": f"{prefix}{self.user_id}"}
+                if after:
+                    params["after"] = after
+                payload = await self.client.get(self.client.settings.openmetadata_access_request_task_path, params)
+                raw_items = payload.get("data", payload.get("tasks", []))
+                matches.extend(item for item in raw_items if str(item.get("name", "")).startswith(f"{prefix}{self.user_id}-"))
+                after = payload.get("paging", {}).get("after")
+                if not after:
+                    break
         requester_names = await self._requester_names(matches)
         tasks = [self._normalize(item, requester_names.get(self._requester_id(item))) for item in matches]
+        tasks.sort(key=lambda task: task.created_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
         start = (page - 1) * page_size
         return TaskPage(items=tasks[start:start + page_size], page=page, page_size=page_size, total=len(tasks))
 
     async def cancel_created_task(self, task_id: str) -> None:
         """Close a portal-created request after confirming its requester scope."""
         task = await self.client.get(f"{self.client.settings.openmetadata_access_request_task_path.rstrip('/')}/{task_id}")
-        if not str(task.get("name", "")).startswith(f"portal-access-{self.user_id}-"):
+        if not self._is_current_users_portal_request(task):
             raise PermissionError("You can only cancel requests you created")
-        if str(task.get("status", "")).lower() in {"approved", "cancelled", "closed", "rejected"}:
+        if str(task.get("status", "")).lower() in {"approved", "granted", "revoked", "cancelled", "closed", "rejected"}:
             raise ValueError("This request can no longer be cancelled")
         # OpenMetadata closes tasks through its dedicated lifecycle endpoint;
         # updating the task entity itself is not a supported cancellation action.
@@ -93,22 +95,10 @@ class OpenMetadataTaskService:
         is_data_access_request = (task.get("taskType") or task.get("type")) == self.client.settings.openmetadata_access_request_task_type
         if is_data_access_request and str(task.get("status", "")).lower() == "pending":
             return await self._resolve_data_access_review(task_id, task, resolution)
-        is_data_product_publication = (task.get("taskType") or task.get("type")) == self.client.settings.openmetadata_data_product_publication_task_type
-        if is_data_product_publication and str(task.get("status", "")).lower() in {"open", "pending"}:
-            return await self._resolve_data_product_publication(task_id, task, resolution)
         resolved = await self.client.post(
             f"{self.client.settings.openmetadata_access_request_task_path.rstrip('/')}/{task_id}/resolve",
             {"resolutionType": resolution.resolution_type, "comment": resolution.comment},
         )
-        requester_names = await self._requester_names([resolved])
-        return self._normalize(resolved, requester_names.get(self._requester_id(resolved)))
-
-    async def _resolve_data_product_publication(self, task_id: str, task: dict, resolution: TaskResolutionRequest) -> Task:
-        if resolution.resolution_type == "Rejected":
-            resolved = await self._resolve_transition(task_id, task, "reject", resolution.comment, "Rejected")
-        else:
-            approved = await self._resolve_transition(task_id, task, "approve", resolution.comment)
-            resolved = await self._resolve_transition(task_id, approved, "grant", "Data Product publication recorded in OpenMetadata.")
         requester_names = await self._requester_names([resolved])
         return self._normalize(resolved, requester_names.get(self._requester_id(resolved)))
 
@@ -150,7 +140,7 @@ class OpenMetadataTaskService:
 
     async def get_created_task(self, task_id: str) -> AccessRequestDetail:
         task = await self.client.get(f"{self.client.settings.openmetadata_access_request_task_path.rstrip('/')}/{task_id}")
-        if not str(task.get("name", "")).startswith(f"portal-access-{self.user_id}-"):
+        if not self._is_current_users_portal_request(task):
             raise PermissionError("You can only view requests you created")
         requester_names = await self._requester_names([task])
         normalized = self._normalize(task, requester_names.get(self._requester_id(task)))
@@ -226,6 +216,15 @@ class OpenMetadataTaskService:
                 if isinstance(name, str):
                     assignees.append(name)
         return assignees
+
+    def _portal_request_types(self) -> tuple[tuple[str, str], tuple[str, str]]:
+        return (
+            (self.client.settings.openmetadata_access_request_task_type, "portal-access-"),
+            (self.client.settings.openmetadata_data_product_publication_task_type, "portal-data-product-"),
+        )
+
+    def _is_current_users_portal_request(self, task: dict) -> bool:
+        return any(str(task.get("name", "")).startswith(f"{prefix}{self.user_id}-") for _, prefix in self._portal_request_types())
 
     def _is_assigned_to_current_user(self, item: dict) -> bool:
         assignees = item.get("assignees")

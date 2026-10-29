@@ -5,7 +5,7 @@ PYTHON ?= $(if $(wildcard .venv311/bin/python),.venv311/bin/python,python3)
 PORT ?= 8000
 ENV_FILE ?= .env
 
-.PHONY: install build test verify run push workflow-bootstrap
+.PHONY: install build test verify run push workflow-bootstrap data-product-tags
 
 install:
 	$(PYTHON) -m pip install -e '.[dev]'
@@ -31,3 +31,6 @@ push:
 
 workflow-bootstrap:
 	$(PYTHON) -m scripts.bootstrap_data_access_workflow
+
+data-product-tags:
+	$(PYTHON) -m scripts.bootstrap_data_product_tags
