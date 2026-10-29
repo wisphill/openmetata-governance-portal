@@ -19,7 +19,8 @@ async def test_access_request_uses_bot_token_and_table_owner(settings):
         if request.method == "GET":
             return httpx.Response(200, json={
                 "id": "table-1", "name": "customers", "fullyQualifiedName": "warehouse.public.customers",
-                    "owners": [{"id": "owner-team", "type": "team", "name": "CustomerOwners", "fullyQualifiedName": "CustomerOwners"}],
+                "tableType": "View", "dataProducts": [{"id": "product-1", "fullyQualifiedName": "CustomerAnalytics"}],
+                "owners": [{"id": "owner-team", "type": "team", "name": "CustomerOwners", "fullyQualifiedName": "CustomerOwners"}],
                 "columns": [{"name": "email", "dataType": "VARCHAR"}],
             })
         assert request.url.path == "/api/v1/tasks"
@@ -53,6 +54,7 @@ async def test_access_request_rejects_columns_not_on_the_selected_table(settings
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={
             "id": "table-1", "name": "customers",
+            "tableType": "View", "dataProducts": [{"id": "product-1"}],
             "owners": [{"id": "owner-team", "type": "team", "fullyQualifiedName": "CustomerOwners"}], "columns": [{"name": "email"}],
         })
 
@@ -67,3 +69,26 @@ async def test_access_request_rejects_columns_not_on_the_selected_table(settings
         await client.close()
 
     assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_access_request_rejects_a_source_table_even_when_called_directly(settings):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "id": "table-1", "name": "customers", "tableType": "Regular",
+            "dataProducts": [{"id": "product-1"}],
+            "owners": [{"id": "owner-team", "type": "team", "fullyQualifiedName": "CustomerOwners"}],
+            "columns": [{"name": "email"}],
+        })
+
+    client = OpenMetadataClient(settings, transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(HTTPException) as exc:
+            await OpenMetadataAccessRequestService(client, settings).create(
+                Identity(id="requester-1", username="alice"),
+                AccessRequestCreate(table_id="table-1", column_ids=[], reason="Monthly customer metrics"),
+            )
+    finally:
+        await client.close()
+
+    assert exc.value.status_code == 403

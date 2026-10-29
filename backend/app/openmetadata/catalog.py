@@ -7,28 +7,91 @@ from app.openmetadata.client import OpenMetadataClient
 
 
 class OpenMetadataCatalogService:
-    """Maps the small, safe catalogue read model used by the portal."""
+    """Maps published Data Product views to the portal catalogue.
+
+    A physical table is a source asset, even if it happens to have an owner or
+    classification.  It must never be offered as an access-request target.
+    The request catalogue therefore admits only views that are explicitly
+    linked to an OpenMetadata Data Product; a technical view is not enough.
+    """
 
     # The deployed OpenMetadata instance exposes table owners as `owners`.
     # The normalizer also accepts the singular form for compatible deployments.
-    _FIELDS = "owners,columns,tags,service,database,databaseSchema"
+    _FIELDS = "owners,columns,tags,service,database,databaseSchema,dataProducts"
 
     def __init__(self, client: OpenMetadataClient) -> None:
         self.client = client
 
     async def list_tables(self, limit: int, after: str | None) -> CatalogPage:
+        # Keep following OM's cursor until this page is full of eligible
+        # products.  Otherwise a catalogue page containing only source tables
+        # would look empty even though a product view is on the next page.
+        items: list[CatalogTable] = []
+        cursor = after
+        next_cursor: str | None = None
+        while len(items) < limit:
+            params: dict[str, Any] = {"limit": limit, "fields": self._FIELDS, "include": "non-deleted"}
+            if cursor:
+                params["after"] = cursor
+            payload = await self.client.get("/tables", params)
+            items.extend(
+                normalized for table in payload.get("data", [])
+                if self.is_requestable_data_product_view(table)
+                if (normalized := self._normalize_table(table))
+            )
+            next_cursor = payload.get("paging", {}).get("after")
+            if not next_cursor:
+                break
+            cursor = next_cursor
+        return CatalogPage(
+            items=items[:limit],
+            after=next_cursor,
+        )
+
+    async def get_table(self, table_id: str) -> CatalogTable:
+        payload = await self.client.get(f"/tables/{table_id}", {"fields": self._FIELDS})
+        self.require_requestable_data_product_view(payload)
+        return self._normalize_table(payload)
+
+    async def list_publishable_views(self, limit: int, after: str | None) -> CatalogPage:
         params: dict[str, Any] = {"limit": limit, "fields": self._FIELDS, "include": "non-deleted"}
         if after:
             params["after"] = after
         payload = await self.client.get("/tables", params)
         return CatalogPage(
-            items=[self._normalize_table(table) for table in payload.get("data", [])],
+            items=[self._normalize_table(table) for table in payload.get("data", []) if self.is_publishable_view(table)],
             after=payload.get("paging", {}).get("after"),
         )
 
-    async def get_table(self, table_id: str) -> CatalogTable:
+    async def get_publishable_view(self, table_id: str) -> CatalogTable:
         payload = await self.client.get(f"/tables/{table_id}", {"fields": self._FIELDS})
+        if not self.is_publishable_view(payload):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Only unpublished views can be submitted as Data Products")
         return self._normalize_table(payload)
+
+    @staticmethod
+    def is_requestable_data_product_view(table: dict[str, Any]) -> bool:
+        """Whether OM explicitly identifies this table as a published product view."""
+        table_type = str(table.get("tableType") or table.get("table_type") or "").casefold()
+        data_products = table.get("dataProducts") or table.get("dataProduct")
+        return table_type == "view" and isinstance(data_products, list) and any(
+            isinstance(product, dict) and (product.get("id") or product.get("fullyQualifiedName") or product.get("name"))
+            for product in data_products
+        )
+
+    @staticmethod
+    def is_publishable_view(table: dict[str, Any]) -> bool:
+        table_type = str(table.get("tableType") or table.get("table_type") or "").casefold()
+        data_products = table.get("dataProducts") or table.get("dataProduct")
+        return table_type == "view" and not data_products
+
+    @classmethod
+    def require_requestable_data_product_view(cls, table: dict[str, Any]) -> None:
+        if not cls.is_requestable_data_product_view(table):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Only published Data Product views can be requested; source tables and technical views are excluded",
+            )
 
     @staticmethod
     def _normalize_table(table: dict[str, Any]) -> CatalogTable:

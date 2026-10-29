@@ -126,6 +126,18 @@ class AccessRequestCreated(BaseModel):
     assignee_count: int
 
 
+class DataProductPublicationCreate(BaseModel):
+    table_id: str = Field(min_length=1, max_length=128)
+    reason: str = Field(min_length=3, max_length=2_000)
+
+
+class DataProductPublicationCreated(BaseModel):
+    id: str
+    request_id: str
+    status: str | None = None
+    assignee_count: int
+
+
 class GrantedAccess(BaseModel):
     id: str
     request_id: str | None = None
@@ -153,10 +165,8 @@ class AssociatedDatabaseAccount(BaseModel):
 
 class AccessRevocation(BaseModel):
     grant_id: str
-    account_name: str
     revoked_resource: str
     openmetadata_state: Literal["revoked"]
-    database_revoke_state: Literal["revoked", "skipped"]
 
 
 class HardDeletedTask(BaseModel):

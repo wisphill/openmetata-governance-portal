@@ -1,7 +1,6 @@
 from app.openmetadata.tasks import OpenMetadataTaskService
 from app.cache.user_names import MemoryUserNameCache
 from app.models.contracts import TaskResolutionRequest
-from app.database.oracle_access_provisioning import OracleAccessProvisioner
 import pytest
 
 
@@ -151,6 +150,8 @@ class ResolveStubClient:
         self.resolutions.append((path, payload))
         transition = payload.get("transitionId")
         if transition == "approve":
+            if self.task.get("type") == self.settings.openmetadata_data_product_publication_task_type:
+                return {**self.task, "status": "Approved", "availableTransitions": [{"id": "grant"}]}
             return {**self.task, "status": "Approved", "availableTransitions": [{"id": "grant"}, {"id": "fail"}]}
         if transition == "grant":
             return {**self.task, "status": "Granted"}
@@ -160,7 +161,7 @@ class ResolveStubClient:
 
 
 @pytest.mark.asyncio
-async def test_assignee_can_resolve_task_with_comment(settings, monkeypatch):
+async def test_assignee_can_resolve_task_with_comment(settings):
     client = ResolveStubClient(settings, {
         "id": "task-43", "type": settings.openmetadata_access_request_task_type, "status": "Pending", "createdById": "d2719c8a-6c97-4b35-b662-e791647b41b3",
         "assignees": [{"id": "user-1"}],
@@ -168,14 +169,6 @@ async def test_assignee_can_resolve_task_with_comment(settings, monkeypatch):
         "payload": {"accessType": "FullAccess", "columns": []},
         "availableTransitions": [{"id": "approve"}, {"id": "reject"}],
     })
-    grants = []
-
-    async def grant_select(self, requester_id, schema, table):
-        grants.append((requester_id, schema, table))
-        return "om::d2719c8a-6c97-4b35-b662-e791647b41b3"
-
-    monkeypatch.setattr(OracleAccessProvisioner, "grant_select", grant_select)
-
     resolved = await OpenMetadataTaskService(client, "user-1", settings=settings).resolve_assigned_task(
         "task-43", TaskResolutionRequest(resolution_type="Approved", comment="Approved for reporting"),
     )
@@ -183,9 +176,27 @@ async def test_assignee_can_resolve_task_with_comment(settings, monkeypatch):
     assert resolved.status == "Granted"
     assert client.resolutions == [
         ("/tasks/task-43/resolve", {"transitionId": "approve", "comment": "Approved for reporting"}),
-        ("/tasks/task-43/resolve", {"transitionId": "grant", "comment": "Oracle access provisioned by the portal."}),
+        ("/tasks/task-43/resolve", {"transitionId": "grant", "comment": "Access granted in OpenMetadata."}),
     ]
-    assert grants == [("d2719c8a-6c97-4b35-b662-e791647b41b3", "app", "ORDERS")]
+
+
+@pytest.mark.asyncio
+async def test_assignee_can_complete_data_product_publication(settings):
+    client = ResolveStubClient(settings, {
+        "id": "task-product-1", "type": settings.openmetadata_data_product_publication_task_type, "status": "Open", "createdById": "requester-1",
+        "assignees": [{"id": "user-1"}], "about": {"fullyQualifiedName": "oracle.dwh.DP_BOOKING_V"},
+        "availableTransitions": [{"id": "approve"}, {"id": "reject"}],
+    })
+
+    resolved = await OpenMetadataTaskService(client, "user-1", settings=settings).resolve_assigned_task(
+        "task-product-1", TaskResolutionRequest(resolution_type="Approved", comment="Ready to publish"),
+    )
+
+    assert resolved.status == "Granted"
+    assert client.resolutions == [
+        ("/tasks/task-product-1/resolve", {"transitionId": "approve", "comment": "Ready to publish"}),
+        ("/tasks/task-product-1/resolve", {"transitionId": "grant", "comment": "Data Product publication recorded in OpenMetadata."}),
+    ]
 
 
 @pytest.mark.asyncio

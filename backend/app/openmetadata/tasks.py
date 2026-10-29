@@ -1,24 +1,17 @@
 import asyncio
-import logging
 from datetime import datetime, timezone
 from fastapi import HTTPException
 
 from app.cache.user_names import UserNameCache
 from app.config import Settings
-from app.database.oracle_access_provisioning import OracleAccessProvisioner
 from app.models.contracts import AccessRequestDetail, Task, TaskPage, TaskResolutionRequest
 from app.openmetadata.client import OpenMetadataClient
-
-
-logger = logging.getLogger(__name__)
-
 
 class OpenMetadataTaskService:
     def __init__(self, client: OpenMetadataClient, user_id: str, user_name_cache: UserNameCache | None = None, settings: Settings | None = None) -> None:
         self.client = client
         self.user_id = user_id
         self.user_name_cache = user_name_cache
-        self.settings = settings
 
     async def list_tasks(self, page: int, page_size: int, status_filter: str | None, task_type: str | None) -> TaskPage:
         """List v2 tasks assigned to the authenticated OpenMetadata identity.
@@ -100,6 +93,9 @@ class OpenMetadataTaskService:
         is_data_access_request = (task.get("taskType") or task.get("type")) == self.client.settings.openmetadata_access_request_task_type
         if is_data_access_request and str(task.get("status", "")).lower() == "pending":
             return await self._resolve_data_access_review(task_id, task, resolution)
+        is_data_product_publication = (task.get("taskType") or task.get("type")) == self.client.settings.openmetadata_data_product_publication_task_type
+        if is_data_product_publication and str(task.get("status", "")).lower() in {"open", "pending"}:
+            return await self._resolve_data_product_publication(task_id, task, resolution)
         resolved = await self.client.post(
             f"{self.client.settings.openmetadata_access_request_task_path.rstrip('/')}/{task_id}/resolve",
             {"resolutionType": resolution.resolution_type, "comment": resolution.comment},
@@ -107,40 +103,29 @@ class OpenMetadataTaskService:
         requester_names = await self._requester_names([resolved])
         return self._normalize(resolved, requester_names.get(self._requester_id(resolved)))
 
-    async def _resolve_data_access_review(self, task_id: str, task: dict, resolution: TaskResolutionRequest) -> Task:
-        """Advance the simple Pending → Approved → Granted workflow.
-
-        The reviewer makes the sole approval decision. The portal then records
-        the provisioning result as a workflow transition; reviewers never need
-        to approve a second time merely to acknowledge database automation.
-        """
+    async def _resolve_data_product_publication(self, task_id: str, task: dict, resolution: TaskResolutionRequest) -> Task:
         if resolution.resolution_type == "Rejected":
             resolved = await self._resolve_transition(task_id, task, "reject", resolution.comment, "Rejected")
         else:
             approved = await self._resolve_transition(task_id, task, "approve", resolution.comment)
-            grant_target = self._oracle_grant_target(task)
-            if self.settings is None:
-                raise RuntimeError("Oracle access provisioning settings are required")
-            try:
-                requester_id, schema, table = grant_target
-                await OracleAccessProvisioner(self.settings).grant_select(requester_id, schema, table)
-            except Exception:
-                # A failed database grant is an auditable OM workflow outcome.
-                logger.exception("Oracle provisioning failed for data-access task %s", task_id)
-                resolved = await self._resolve_transition(
-                    task_id,
-                    approved,
-                    "fail",
-                    "Oracle provisioning failed; see portal service logs for diagnostics.",
-                    "TimedOut",
-                )
-            else:
-                resolved = await self._resolve_transition(
-                    task_id,
-                    approved,
-                    "grant",
-                    "Oracle access provisioned by the portal.",
-                )
+            resolved = await self._resolve_transition(task_id, approved, "grant", "Data Product publication recorded in OpenMetadata.")
+        requester_names = await self._requester_names([resolved])
+        return self._normalize(resolved, requester_names.get(self._requester_id(resolved)))
+
+    async def _resolve_data_access_review(self, task_id: str, task: dict, resolution: TaskResolutionRequest) -> Task:
+        """Advance the Pending → Approved → Granted workflow in OpenMetadata."""
+        if resolution.resolution_type == "Rejected":
+            resolved = await self._resolve_transition(task_id, task, "reject", resolution.comment, "Rejected")
+        else:
+            approved = await self._resolve_transition(task_id, task, "approve", resolution.comment)
+            # Oracle role/policy provisioning is deliberately disabled.  The
+            # OpenMetadata workflow is the current source of access state.
+            resolved = await self._resolve_transition(
+                task_id,
+                approved,
+                "grant",
+                "Access granted in OpenMetadata.",
+            )
         requester_names = await self._requester_names([resolved])
         return self._normalize(resolved, requester_names.get(self._requester_id(resolved)))
 
@@ -162,23 +147,6 @@ class OpenMetadataTaskService:
             f"{self.client.settings.openmetadata_access_request_task_path.rstrip('/')}/{task_id}/resolve",
             payload,
         )
-
-    def _oracle_grant_target(self, task: dict) -> tuple[str, str, str]:
-        """Return the trusted requester and table identified by the OM task."""
-        requester_id = self._requester_id(task)
-        if not requester_id:
-            raise ValueError("The access request has no OpenMetadata requester")
-        payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
-        if payload.get("accessType") == "ColumnLevel" or payload.get("columns"):
-            raise ValueError("Oracle provisioning currently supports table-level access requests only")
-        about = task.get("about") if isinstance(task.get("about"), dict) else {}
-        fqn = about.get("fullyQualifiedName")
-        if not isinstance(fqn, str):
-            raise ValueError("The access request does not identify a table")
-        parts = fqn.split(".")
-        if len(parts) < 2:
-            raise ValueError("The requested table fully qualified name is invalid")
-        return requester_id, parts[-2], parts[-1]
 
     async def get_created_task(self, task_id: str) -> AccessRequestDetail:
         task = await self.client.get(f"{self.client.settings.openmetadata_access_request_task_path.rstrip('/')}/{task_id}")

@@ -1,7 +1,7 @@
 {
   "name": "DataAccessRequestTaskWorkflow",
   "displayName": "Data Access Request Workflow",
-  "description": "Data-access lifecycle: a task reviewer approves or rejects a pending request. On approval the portal records Approved, provisions Oracle access, and advances to Granted; provisioning errors end Failed. Granted access can expire automatically or be revoked directly by an administrator. Diagram node labels intentionally include the OpenMetadata task status.",
+  "description": "Data-access lifecycle: a task reviewer approves or rejects a pending request. On approval the portal records Approved then Granted in OpenMetadata. Oracle policy provisioning is intentionally disabled. Granted access can expire automatically or be revoked directly by an administrator. Diagram node labels intentionally include the OpenMetadata task status.",
   "config": {"storeStageStatus": true},
   "trigger": {"type": "noOp", "config": {}, "output": ["relatedEntity", "updatedBy"]},
   "nodes": [
@@ -20,13 +20,12 @@
       "inputNamespaceMap": {"relatedEntity": "global"}
     },
     {
-      "type": "userTask", "subType": "userApprovalTask", "name": "ApprovedProvisioning", "displayName": "[Approved] Provisioning Oracle access",
+      "type": "userTask", "subType": "userApprovalTask", "name": "ApprovedGrant", "displayName": "[Approved] Recording OpenMetadata access",
       "config": {
         "assignees": {"addReviewers": true, "addOwners": false, "candidates": [], "emptyAssigneeStrategy": "assignAdmins"},
-        "approvalThreshold": 1, "rejectionThreshold": 1, "stageId": "approved", "stageDisplayName": "Approved — provisioning access", "taskStatus": "Approved", "assigneeStrategy": "reviewers",
+        "approvalThreshold": 1, "rejectionThreshold": 1, "stageId": "approved", "stageDisplayName": "Approved — recording OpenMetadata access", "taskStatus": "Approved", "assigneeStrategy": "reviewers",
         "transitionMetadata": [
-          {"id": "grant", "label": "Provisioned", "targetStageId": "granted", "targetTaskStatus": "Granted", "formRef": "grant", "requiresComment": false},
-          {"id": "fail", "label": "Provisioning failed", "targetStageId": "failed", "targetTaskStatus": "Failed", "resolutionType": "TimedOut", "formRef": "fail", "requiresComment": true}
+          {"id": "grant", "label": "Grant access", "targetStageId": "granted", "targetTaskStatus": "Granted", "formRef": "grant", "requiresComment": false}
         ]
       },
       "inputNamespaceMap": {"relatedEntity": "global"}
@@ -46,17 +45,15 @@
     },
     {"type": "endEvent", "subType": "endEvent", "name": "RejectedEnd", "displayName": "[Rejected] Request denied"},
     {"type": "endEvent", "subType": "endEvent", "name": "CancelledEnd", "displayName": "[Cancelled] Request cancelled"},
-    {"type": "endEvent", "subType": "endEvent", "name": "FailedEnd", "displayName": "[Failed] Oracle provisioning failed"},
     {"type": "endEvent", "subType": "endEvent", "name": "RevokedEnd", "displayName": "[Revoked] Access removed"},
     {"type": "endEvent", "subType": "endEvent", "name": "ExpiredEnd", "displayName": "[Expired] Access expired"}
   ],
   "edges": [
     {"from": "TaskStart", "to": "PendingReview"},
-    {"from": "PendingReview", "to": "ApprovedProvisioning", "condition": "approve"},
+    {"from": "PendingReview", "to": "ApprovedGrant", "condition": "approve"},
     {"from": "PendingReview", "to": "RejectedEnd", "condition": "reject"},
     {"from": "PendingReview", "to": "CancelledEnd", "condition": "cancel"},
-    {"from": "ApprovedProvisioning", "to": "GrantedAccess", "condition": "grant"},
-    {"from": "ApprovedProvisioning", "to": "FailedEnd", "condition": "fail"},
+    {"from": "ApprovedGrant", "to": "GrantedAccess", "condition": "grant"},
     {"from": "GrantedAccess", "to": "RevokedEnd", "condition": "revoke"},
     {"from": "GrantedAccess", "to": "ExpiredEnd", "condition": "expire"}
   ]

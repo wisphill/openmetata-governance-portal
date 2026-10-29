@@ -11,10 +11,11 @@ from app.config import Settings, get_settings
 from app.database.oracle import OracleAdapter
 from app.database.oracle_access_provisioning import OracleAccessProvisioner
 from app.database.oracle_proxy_query import OracleProxyQueryService
-from app.models.contracts import AccessRequestCreate, AccessRequestCreated, AccessRequestDetail, AccessRevocation, CatalogPage, CatalogTable, GrantedAccessPage, HardDeletedTask, MeResponse, QueryRequest, QueryResult, Task, TaskPage, TaskResolutionRequest, UserAccessAudit
+from app.models.contracts import AccessRequestCreate, AccessRequestCreated, AccessRequestDetail, AccessRevocation, CatalogPage, CatalogTable, DataProductPublicationCreate, DataProductPublicationCreated, GrantedAccessPage, HardDeletedTask, MeResponse, QueryRequest, QueryResult, Task, TaskPage, TaskResolutionRequest, UserAccessAudit
 from app.openmetadata.access_requests import OpenMetadataAccessRequestService
 from app.openmetadata.authorization import OpenMetadataAuthorizationService
 from app.openmetadata.catalog import OpenMetadataCatalogService
+from app.openmetadata.data_product_publications import OpenMetadataDataProductPublicationService
 from app.openmetadata.grants import OpenMetadataGrantedAccessService
 from app.openmetadata.client import OpenMetadataClient
 from app.openmetadata.tasks import OpenMetadataTaskService
@@ -178,6 +179,57 @@ async def create_access_request(request: AccessRequestCreate, authz: AuthzDep, s
         await client.close()
 
 
+@router.get("/api/data-product-publications/candidates", response_model=CatalogPage)
+async def data_product_publication_candidates(authz: AuthzDep, settings: SettingsDep, after: str | None = Query(None, max_length=512), page_size: int | None = Query(None, ge=1, le=100)):
+    try:
+        await authz.get_current_user()
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
+    client = OpenMetadataClient(settings)
+    try:
+        return await OpenMetadataCatalogService(client).list_publishable_views(page_size or settings.openmetadata_catalog_page_size, after)
+    finally:
+        await client.close()
+
+
+@router.post("/api/data-product-publications", response_model=DataProductPublicationCreated, status_code=status.HTTP_201_CREATED)
+async def create_data_product_publication(request: DataProductPublicationCreate, authz: AuthzDep, settings: SettingsDep):
+    try:
+        user = await authz.get_current_user()
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
+    client = OpenMetadataClient(settings)
+    try:
+        return await OpenMetadataDataProductPublicationService(client, settings).create(user.identity, request)
+    finally:
+        await client.close()
+
+
+@router.get("/api/data-products", response_model=TaskPage)
+async def data_products(authz: AuthzDep, settings: SettingsDep, page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)):
+    try:
+        await authz.get_current_user()
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
+    client = OpenMetadataClient(settings)
+    try:
+        return await OpenMetadataDataProductPublicationService(client, settings).list_products(page, page_size)
+    finally:
+        await client.close()
+
+
+@router.post("/api/data-products/{task_id}/revoke", response_model=Task)
+async def revoke_data_product(task_id: str, authz: AuthzDep, settings: SettingsDep):
+    actor = await authz.get_current_user()
+    if not actor.is_admin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only OpenMetadata administrators can revoke Data Products")
+    client = OpenMetadataClient(settings)
+    try:
+        return await OpenMetadataDataProductPublicationService(client, settings).revoke(task_id)
+    finally:
+        await client.close()
+
+
 @router.get("/api/tasks/{task_id}")
 async def task_by_id(task_id: str, session: SessionDep, settings: SettingsDep):
     # Task retrieval is intentionally delegated to OpenMetadata with the user's token.
@@ -311,16 +363,10 @@ async def revoke_user_access_grant(user_id: str, grant_id: str, authz: AuthzDep,
             raise HTTPException(status.HTTP_409_CONFLICT, "This grant is not managed by the portal for the selected user")
         if str(task.get("status", "")).lower() not in {"approved", "granted"}:
             raise HTTPException(status.HTTP_409_CONFLICT, "Only approved data-access grants can be revoked")
-        payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
-        if payload.get("accessType") == "ColumnLevel" or payload.get("columns"):
-            raise HTTPException(status.HTTP_409_CONFLICT, "Column-level access is not provisioned by the portal and cannot be revoked here")
         about = task.get("about") if isinstance(task.get("about"), dict) else {}
         fqn = about.get("fullyQualifiedName")
         if not isinstance(fqn, str):
             raise HTTPException(status.HTTP_409_CONFLICT, "The grant does not identify a table resource")
-        parts = fqn.split(".")
-        if len(parts) < 2:
-            raise HTTPException(status.HTTP_409_CONFLICT, "The grant table resource is invalid")
         transitions = task.get("availableTransitions") if isinstance(task.get("availableTransitions"), list) else []
         revoke_transition = next(
             (
@@ -386,26 +432,10 @@ async def revoke_user_access_grant(user_id: str, grant_id: str, authz: AuthzDep,
         )
     finally:
         await client.close()
-    provisioner = OracleAccessProvisioner(settings)
-    try:
-        account_name = provisioner.client_username(user_id)
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-    try:
-        await provisioner.revoke_select(user_id, parts[-2], parts[-1])
-        database_revoke_state = "revoked"
-    except Exception:
-        # OpenMetadata has already recorded the workflow revocation. Database
-        # cleanup is best-effort: a missing or unavailable Oracle account must
-        # not turn that completed revocation into a failed request.
-        logger.warning("Oracle revoke skipped for portal grant %s and account %s", grant_id, account_name, exc_info=True)
-        database_revoke_state = "skipped"
     return AccessRevocation(
         grant_id=grant_id,
-        account_name=account_name,
         revoked_resource=fqn,
         openmetadata_state="revoked",
-        database_revoke_state=database_revoke_state,
     )
 
 
