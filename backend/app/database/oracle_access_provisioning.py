@@ -63,7 +63,12 @@ class OracleAccessProvisioner:
                 try:
                     await asyncio.to_thread(
                         cursor.execute,
-                        "SELECT username, account_status, created FROM all_users WHERE username = :username",
+                        # ALL_USERS is available to the provisioner without
+                        # DBA dictionary privileges. It does not expose
+                        # ACCOUNT_STATUS (that column is in DBA_USERS), so
+                        # querying it made every audit lookup appear
+                        # unavailable with ORA-00904.
+                        "SELECT username, created FROM all_users WHERE username = :username",
                         {"username": client},
                     )
                     row = await asyncio.to_thread(cursor.fetchone)
@@ -78,7 +83,7 @@ class OracleAccessProvisioner:
         if not row:
             return AssociatedDatabaseAccount(account_name=client, state="not_found")
         return AssociatedDatabaseAccount(
-            account_name=str(row[0]), state="found", account_status=str(row[1]) if row[1] else None, created_at=row[2],
+            account_name=str(row[0]), state="found", created_at=row[1],
         )
 
     @staticmethod

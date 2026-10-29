@@ -1,9 +1,12 @@
 import json
+import logging
 
 import httpx
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
+import app.main
 from app.openmetadata.client import OpenMetadataClient
 
 
@@ -37,6 +40,34 @@ async def test_post_translates_upstream_timeouts(settings):
 
     assert exc.value.status_code == 504
     assert exc.value.detail == "OpenMetadata request timed out"
+
+
+@pytest.mark.asyncio
+async def test_post_timeout_is_logged_with_its_operation_and_path(settings, caplog):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("timed out", request=request)
+
+    client = OpenMetadataClient(settings, transport=httpx.MockTransport(handler))
+    with caplog.at_level(logging.WARNING, logger="app.openmetadata.client"):
+        try:
+            with pytest.raises(HTTPException):
+                await client.post("/tasks/task-1/resolve", {"transitionId": "grant"})
+        finally:
+            await client.close()
+
+    assert "OpenMetadata POST timed out: path=/tasks/task-1/resolve" in caplog.text
+
+
+def test_backend_logs_error_responses_with_a_request_id(settings, monkeypatch, caplog):
+    monkeypatch.setattr(app.main, "get_settings", lambda: settings)
+    test_app = app.main.create_app()
+
+    with caplog.at_level(logging.WARNING, logger="app.main"):
+        response = TestClient(test_app).get("/api/not-a-route", headers={"X-Request-ID": "request-123"})
+
+    assert response.status_code == 404
+    assert response.headers["X-Request-ID"] == "request-123"
+    assert "request_id=request-123 method=GET path=/api/not-a-route status=404" in caplog.text
 
 
 @pytest.mark.asyncio

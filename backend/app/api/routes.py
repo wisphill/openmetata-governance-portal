@@ -10,7 +10,7 @@ from app.auth.session import Session
 from app.config import Settings, get_settings
 from app.database.oracle import OracleAdapter
 from app.database.oracle_access_provisioning import OracleAccessProvisioner
-from app.database.oracle_temporary_proxy import OracleTemporaryProxyQueryService
+from app.database.oracle_proxy_query import OracleProxyQueryService
 from app.models.contracts import AccessRequestCreate, AccessRequestCreated, AccessRequestDetail, AccessRevocation, CatalogPage, CatalogTable, GrantedAccessPage, HardDeletedTask, MeResponse, QueryRequest, QueryResult, Task, TaskPage, TaskResolutionRequest, UserAccessAudit
 from app.openmetadata.access_requests import OpenMetadataAccessRequestService
 from app.openmetadata.authorization import OpenMetadataAuthorizationService
@@ -449,17 +449,17 @@ async def database_query(request: QueryRequest, authz: AuthzDep, settings: Setti
 async def query(request: QueryRequest, authz: AuthzDep, settings: SettingsDep):
     await authz.get_current_user()
     try:
-        result = await OracleTemporaryProxyQueryService(settings).execute(request.sql, request.parameters)
+        result = await OracleProxyQueryService(settings).execute(request.sql, request.parameters)
     except PermissionError as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
     except Exception as exc:
-        logger.exception("Oracle temporary-proxy query failed")
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Oracle could not execute the query. The temporary proxy user was cleaned up.") from exc
+        logger.exception("Oracle proxy query failed")
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Oracle could not execute the query through the configured proxy account.") from exc
     return QueryResult(
         columns=result.columns,
         items=result.items,
         row_count=len(result.items),
-        message="Query completed through a temporary Oracle proxy user.",
+        message="Query completed through the configured Oracle proxy account.",
     )
