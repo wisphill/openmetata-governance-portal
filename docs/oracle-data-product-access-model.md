@@ -6,7 +6,7 @@ Người dùng nghiệp vụ và công cụ BI chỉ truy vấn dữ liệu qua 
 
 OpenMetadata (OM) là nơi quản trị metadata, request, phê duyệt và entitlement. Oracle Database là nơi thực thi quyền khi query: kiểm tra role, áp row filter, masking/redaction và ghi audit log. Oracle không gọi OM trong từng câu query.
 
-> Trạng thái triển khai hiện tại: portal chỉ ghi nhận/cập nhật entitlement trong OpenMetadata. Phần đồng bộ policy, role và `GRANT`/`REVOKE` trên Oracle đang được tạm dừng.
+> `backend/scripts/policy_sync.py` triển khai đồng bộ desired-state từ entitlement đã được duyệt trên OpenMetadata sang Oracle. Script mặc định tắt (`ORACLE_POLICY_SYNC_ENABLED=false`) cho đến khi principal và mapping production được cấu hình.
 
 ```text
 User/BI/Application
@@ -99,6 +99,25 @@ GRANT role_revenue_analyst TO user_name;
 ```
 
 Không thực hiện `GRANT SELECT ON dwh_core.booking TO user_name` cho user nghiệp vụ.
+
+## Policy sync OpenMetadata → Oracle
+
+Chạy `python scripts/policy_sync.py` trong thư mục `backend` theo lịch (ví dụ 5 phút/lần). Mỗi lần chạy script:
+
+1. Phân trang toàn bộ user từ OM, rồi lấy các DataAccessRequest của từng user có trạng thái `Approved` hoặc `Granted`.
+2. Chỉ chọn request `READ` chưa hết hạn và chỉ map asset OM qua `ORACLE_POLICY_SYNC_VIEW_MAP`. Mapping là JSON từ OM view FQN (hoặc ID) tới tên `SCHEMA.VIEW` Oracle đã công bố; không có mapping thì không cấp quyền.
+3. Kiểm tra object đích trong `ALL_VIEWS`, tạo proxy-client `"om::<OM UUID>"` nếu cần, cấp `CREATE SESSION`, cấu hình `CONNECT THROUGH` cho `ORACLE_PROXY_USER`, rồi `GRANT SELECT` trên view.
+4. Lưu các grant do script sở hữu trong bảng `OM_POLICY_SYNC_GRANTS`. Snapshot entitlement hiện tại được so với bảng này; request bị `Revoked`, đổi view/permission, hết hạn, hoặc user không còn trong OM sẽ khiến `REVOKE SELECT` và xoá ledger record ở lần chạy tiếp theo.
+
+Ledger chỉ chứa các grant của policy sync, nên không thu hồi quyền được DBA cấp thủ công. Provisioner phải có `CREATE USER`, `ALTER USER`, `GRANT CREATE SESSION`, quyền `GRANT SELECT` trên các published view và quyền tạo/ghi bảng `OM_POLICY_SYNC_GRANTS`; nó cần đọc được `ALL_USERS` và `ALL_VIEWS`. `ORACLE_PROXY_USER` phải là một Oracle identifier không quote và có thể kết nối bằng proxy authentication.
+
+Ví dụ cấu hình (không đặt credential vào repository):
+
+```dotenv
+ORACLE_POLICY_SYNC_ENABLED=true
+ORACLE_PROXY_USER=PORTAL_PROXY
+ORACLE_POLICY_SYNC_VIEW_MAP={"oracle_service.DWH_PRODUCT.DP_BOOKING_ANALYTICS_V":"DWH_PRODUCT.DP_BOOKING_ANALYTICS_V"}
+```
 
 ## Ngoại lệ direct table access
 

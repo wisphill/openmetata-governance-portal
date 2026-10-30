@@ -57,6 +57,14 @@ class Settings(BaseSettings):
     oracle_provisioner_password: str | None = None
     oracle_proxy_user: str | None = None
     oracle_proxy_password: str | None = None
+    # Policy sync uses this existing proxy principal to connect as the
+    # per-OpenMetadata-user proxy clients it creates.  The explicit mapping is
+    # deliberately required: a task must never be translated into a grant on
+    # an arbitrary Oracle object.
+    oracle_policy_sync_enabled: bool = False
+    oracle_policy_sync_view_map: str = "{}"
+    oracle_policy_sync_user_page_size: int = Field(default=100, ge=1, le=1000)
+    oracle_policy_sync_user_max_pages: int = Field(default=100, ge=1, le=1000)
     oracle_user_allowlist: str = ""
     oracle_query_schema: str = "APP"
     oracle_query_table: str = "CUSTOMERS"

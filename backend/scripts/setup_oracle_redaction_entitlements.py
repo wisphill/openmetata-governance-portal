@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""Install Oracle entitlement-backed STATUS redaction for APP.V_ORDER_TOTALS.
+"""Install reusable Oracle entitlement and application-context infrastructure.
 
-Levels: NONE (****), PARTIAL (first and last character), FULL (original).
-The trusted application context is populated at database logon.
+Run as a DBA/provisioning account, never as the portal runtime account. When
+the provisioner is not APP, it needs CREATE ANY TABLE, CREATE ANY PROCEDURE,
+CREATE ANY CONTEXT, CREATE ANY TRIGGER, DROP ANY TRIGGER, and authority to grant ADMINISTER
+DATABASE TRIGGER to APP.
+
+APP receives ADMINISTER DATABASE TRIGGER so it can own the trusted database
+logon trigger. APP owns the catalog, entitlement table, and context package.
 """
 
 import logging
@@ -65,6 +70,52 @@ def main() -> int:
                     raise
                 logger.info("Entitlement table already exists")
 
+            try:
+                run_ddl(cursor, "redaction policy catalog", """
+                    CREATE TABLE app.data_redaction_policy_catalog (
+                        policy_key VARCHAR2(30) NOT NULL,
+                        object_owner VARCHAR2(128) NOT NULL,
+                        object_name VARCHAR2(128) NOT NULL,
+                        column_name VARCHAR2(128) NOT NULL,
+                        default_unmask_level VARCHAR2(7) DEFAULT 'NONE' NOT NULL,
+                        partial_mask_rule VARCHAR2(30) DEFAULT 'FIRST_LAST' NOT NULL,
+                        enabled CHAR(1) DEFAULT 'Y' NOT NULL,
+                        created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+                        CONSTRAINT data_redaction_policy_catalog_pk PRIMARY KEY (policy_key),
+                        CONSTRAINT data_redaction_policy_catalog_uq UNIQUE
+                            (object_owner, object_name, column_name),
+                        CONSTRAINT data_redaction_policy_catalog_level_ck
+                            CHECK (default_unmask_level IN ('NONE', 'PARTIAL', 'FULL')),
+                        CONSTRAINT data_redaction_policy_catalog_enabled_ck CHECK (enabled IN ('Y', 'N'))
+                    )
+                """)
+            except oracledb.DatabaseError as exc:
+                if "ORA-00955" not in str(exc):
+                    raise
+                logger.info("Redaction policy catalog already exists")
+            try:
+                run_ddl(cursor, "active-entitlement lookup index", """
+                    CREATE INDEX app.data_redaction_entitlements_active_ix
+                    ON app.data_redaction_entitlements
+                       (principal_name, enabled, valid_from, valid_until)
+                """)
+            except oracledb.DatabaseError as exc:
+                if "ORA-00955" not in str(exc):
+                    raise
+                logger.info("Active-entitlement lookup index already exists")
+            run_ddl(cursor, "V_ORDER_TOTALS.STATUS catalog seed", """
+                MERGE INTO app.data_redaction_policy_catalog catalog
+                USING (SELECT 'APP_V_ORDER_TOTALS_STATUS' policy_key FROM dual) source
+                ON (catalog.policy_key = source.policy_key)
+                WHEN MATCHED THEN UPDATE SET
+                    object_owner = 'APP', object_name = 'V_ORDER_TOTALS', column_name = 'STATUS',
+                    default_unmask_level = 'NONE', partial_mask_rule = 'FIRST_LAST', enabled = 'Y'
+                WHEN NOT MATCHED THEN INSERT
+                    (policy_key, object_owner, object_name, column_name, default_unmask_level, partial_mask_rule, enabled)
+                VALUES
+                    ('APP_V_ORDER_TOTALS_STATUS', 'APP', 'V_ORDER_TOTALS', 'STATUS', 'NONE', 'FIRST_LAST', 'Y')
+            """)
+
             run_ddl(cursor, "trusted context package specification", """
                 CREATE OR REPLACE PACKAGE app.redaction_context_pkg AUTHID DEFINER AS
                   PROCEDURE load_session_entitlements;
@@ -73,26 +124,21 @@ def main() -> int:
             run_ddl(cursor, "trusted context package body", """
                 CREATE OR REPLACE PACKAGE BODY app.redaction_context_pkg AS
                   PROCEDURE load_session_entitlements IS
-                    l_attribute VARCHAR2(30);
                   BEGIN
-                    DBMS_SESSION.SET_CONTEXT('APP_REDACTION_CTX', 'APP_V_ORDER_TOTALS_STATUS', 'NONE');
                     FOR entitlement IN (
-                      SELECT object_owner, object_name, column_name, unmask_level
-                      FROM app.data_redaction_entitlements
-                      WHERE principal_name = SYS_CONTEXT('USERENV', 'SESSION_USER')
-                        AND enabled = 'Y'
-                        AND valid_from <= SYSTIMESTAMP
-                        AND (valid_until IS NULL OR valid_until > SYSTIMESTAMP)
+                      SELECT catalog.policy_key, entitlement.unmask_level
+                      FROM app.data_redaction_entitlements entitlement
+                      JOIN app.data_redaction_policy_catalog catalog
+                        ON catalog.object_owner = entitlement.object_owner
+                       AND catalog.object_name = entitlement.object_name
+                       AND catalog.column_name = entitlement.column_name
+                      WHERE entitlement.principal_name = SYS_CONTEXT('USERENV', 'SESSION_USER')
+                        AND entitlement.enabled = 'Y'
+                        AND entitlement.valid_from <= SYSTIMESTAMP
+                        AND (entitlement.valid_until IS NULL OR entitlement.valid_until > SYSTIMESTAMP)
+                        AND catalog.enabled = 'Y'
                     ) LOOP
-                      l_attribute := SUBSTR(
-                        REGEXP_REPLACE(
-                          entitlement.object_owner || '_' || entitlement.object_name || '_' || entitlement.column_name,
-                          '[^A-Z0-9_]', '_'
-                        ),
-                        1,
-                        30
-                      );
-                      DBMS_SESSION.SET_CONTEXT('APP_REDACTION_CTX', l_attribute, entitlement.unmask_level);
+                      DBMS_SESSION.SET_CONTEXT('APP_REDACTION_CTX', entitlement.policy_key, entitlement.unmask_level);
                     END LOOP;
                   END;
                 END;
@@ -121,38 +167,6 @@ def main() -> int:
                     NULL; -- fail closed: the view defaults to the NONE mask.
                 END;
             """)
-            run_ddl(cursor, "context-aware security view", """
-                CREATE OR REPLACE VIEW app.v_order_totals AS
-                SELECT o.order_id,
-                       o.customer_id,
-                       CASE SYS_CONTEXT('APP_REDACTION_CTX', 'APP_V_ORDER_TOTALS_STATUS')
-                         WHEN 'FULL' THEN o.status
-                         WHEN 'PARTIAL' THEN CASE
-                           WHEN o.status IS NULL THEN NULL
-                           WHEN LENGTH(o.status) <= 2 THEN RPAD('*', LENGTH(o.status), '*')
-                           ELSE SUBSTR(o.status, 1, 1) || RPAD('*', LENGTH(o.status) - 2, '*') || SUBSTR(o.status, -1)
-                         END
-                         ELSE '****'
-                       END AS status,
-                       SUM(i.quantity * i.unit_price) AS order_total
-                FROM app.orders o
-                JOIN app.order_items i ON i.order_id = o.order_id
-                GROUP BY o.order_id, o.customer_id, o.status
-            """)
-            cursor.execute("""
-                SELECT 1 FROM sys.redaction_columns
-                WHERE object_owner = 'APP' AND object_name = 'V_ORDER_TOTALS' AND column_name = 'STATUS'
-            """)
-            if cursor.fetchone():
-                run_ddl(cursor, "removing static STATUS policy", """
-                    BEGIN
-                      DBMS_REDACT.ALTER_POLICY(
-                        object_schema => 'APP', object_name => 'V_ORDER_TOTALS',
-                        policy_name => 'V_ORDER_TOTALS_ORDER_TOTAL_DDM',
-                        action => DBMS_REDACT.DROP_COLUMN, column_name => 'STATUS'
-                      );
-                    END;
-                """)
         connection.commit()
         logger.info("Entitlement setup complete")
         return 0

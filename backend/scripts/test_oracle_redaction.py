@@ -2,9 +2,15 @@
 """Smoke-test Oracle Data Redaction on APP.V_ORDER_TOTALS.
 
 The script creates a temporary least-privilege user, grants it access only to
-the published view, and verifies that every published column is redacted. The user
-is dropped on every exit path.  Credentials and unredacted source values are
-never written to logs.
+the published view, and verifies that every published column is redacted. The
+user is dropped on every exit path. Credentials and unredacted source values
+are never written to logs.
+
+Run as a dedicated test provisioner. It needs CREATE USER, DROP USER, GRANT
+CREATE SESSION, and GRANT SELECT ON APP.V_ORDER_TOTALS. It also needs SELECT on
+APP.ORDERS only to calculate the expected result in memory, plus
+SELECT_CATALOG_ROLE or direct SELECT access to SYS.REDACTION_POLICIES and
+SYS.REDACTION_COLUMNS for policy preflight. Do not run it as SYS or APP.
 """
 
 import logging
@@ -24,7 +30,6 @@ REDACTED_COLUMNS = {
     "CUSTOMER_ID": "FULL REDACTION",
     "ORDER_TOTAL": "FULL REDACTION",
 }
-STATUS_CONTEXT_ATTRIBUTE = "APP_V_ORDER_TOTALS_STATUS"
 
 logger = logging.getLogger(__name__)
 
@@ -81,16 +86,32 @@ def verify_policy(cursor: Any) -> None:
     logger.info("Policy preflight passed: %s", actual)
 
 
+def status_policy_key(cursor: Any) -> str:
+    cursor.execute(
+        """
+        SELECT policy_key
+        FROM app.data_redaction_policy_catalog
+        WHERE object_owner = 'APP' AND object_name = 'V_ORDER_TOTALS' AND column_name = 'STATUS'
+          AND enabled = 'Y'
+        """
+    )
+    row = cursor.fetchone()
+    if not row:
+        raise RuntimeError("No active catalog entry exists for APP.V_ORDER_TOTALS.STATUS")
+    logger.info("Catalog preflight passed: STATUS policy_key=%s", row[0])
+    return str(row[0])
+
+
 def partial_status(value: str) -> str:
     if len(value) <= 2:
         return "*" * len(value)
     return value[0] + ("*" * (len(value) - 2)) + value[-1]
 
 
-def verify_masked(test_connection: Any, expected_status: str) -> None:
+def verify_masked(test_connection: Any, expected_status: str, policy_key: str) -> None:
     """Verify every view column returns its configured redacted representation."""
     with test_connection.cursor() as cursor:
-        cursor.execute("SELECT SYS_CONTEXT('APP_REDACTION_CTX', :attribute) FROM dual", attribute=STATUS_CONTEXT_ATTRIBUTE)
+        cursor.execute("SELECT SYS_CONTEXT('APP_REDACTION_CTX', :attribute) FROM dual", attribute=policy_key)
         context_level = cursor.fetchone()[0]
         logger.info("Logon-loaded STATUS entitlement level=%s", context_level or "<unset>")
         logger.info("Querying %s.%s as the temporary user", VIEW_OWNER, VIEW_NAME)
@@ -148,6 +169,7 @@ def main() -> int:
         logger.info("Connected as the configured provisioner")
         with admin_connection.cursor() as cursor:
             verify_policy(cursor)
+            policy_key = status_policy_key(cursor)
             # Read the source only to compute the expected partial mask. It is
             # never logged; the view itself is context-aware and would return
             # its default mask for this provisioner session.
@@ -182,7 +204,7 @@ def main() -> int:
 
         test_connection = oracledb.connect(user=username, password=password, dsn=settings.oracle_dsn)
         logger.info("Connected as temporary user %s", username)
-        verify_masked(test_connection, expected_status)
+        verify_masked(test_connection, expected_status, policy_key)
         logger.info("Oracle Data Redaction smoke test passed")
     except Exception:
         failed = True
