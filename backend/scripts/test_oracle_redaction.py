@@ -22,9 +22,9 @@ VIEW_NAME = "V_ORDER_TOTALS"
 REDACTED_COLUMNS = {
     "ORDER_ID": "FULL REDACTION",
     "CUSTOMER_ID": "FULL REDACTION",
-    "STATUS": "REGEXP",
     "ORDER_TOTAL": "FULL REDACTION",
 }
+STATUS_CONTEXT_ATTRIBUTE = "APP_V_ORDER_TOTALS_STATUS"
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +81,18 @@ def verify_policy(cursor: Any) -> None:
     logger.info("Policy preflight passed: %s", actual)
 
 
-def verify_masked(test_connection: Any) -> None:
+def partial_status(value: str) -> str:
+    if len(value) <= 2:
+        return "*" * len(value)
+    return value[0] + ("*" * (len(value) - 2)) + value[-1]
+
+
+def verify_masked(test_connection: Any, expected_status: str) -> None:
     """Verify every view column returns its configured redacted representation."""
     with test_connection.cursor() as cursor:
+        cursor.execute("SELECT SYS_CONTEXT('APP_REDACTION_CTX', :attribute) FROM dual", attribute=STATUS_CONTEXT_ATTRIBUTE)
+        context_level = cursor.fetchone()[0]
+        logger.info("Logon-loaded STATUS entitlement level=%s", context_level or "<unset>")
         logger.info("Querying %s.%s as the temporary user", VIEW_OWNER, VIEW_NAME)
         cursor.execute(
             "SELECT ORDER_ID, CUSTOMER_ID, STATUS, ORDER_TOTAL "
@@ -96,7 +105,7 @@ def verify_masked(test_connection: Any) -> None:
     if not rows:
         raise RuntimeError("No rows were returned; redaction cannot be verified")
 
-    expected = (0, 0, "****", 0)
+    expected = (0, 0, expected_status, 0)
     if any(row != expected for row in rows):
         raise RuntimeError(
             "Data Redaction verification failed: the temporary user received "
@@ -126,6 +135,7 @@ def main() -> int:
     admin_connection = None
     test_connection = None
     user_created = False
+    entitlement_created = False
     failed = False
 
     logger.info("Starting Oracle Data Redaction smoke test with temporary user %s", username)
@@ -138,6 +148,14 @@ def main() -> int:
         logger.info("Connected as the configured provisioner")
         with admin_connection.cursor() as cursor:
             verify_policy(cursor)
+            # Read the source only to compute the expected partial mask. It is
+            # never logged; the view itself is context-aware and would return
+            # its default mask for this provisioner session.
+            cursor.execute("SELECT status FROM app.orders WHERE status IS NOT NULL FETCH FIRST 1 ROW ONLY")
+            source_status = cursor.fetchone()
+            if not source_status:
+                raise RuntimeError("No non-null STATUS value was returned; partial redaction cannot be verified")
+            expected_status = partial_status(str(source_status[0]))
             execute(
                 cursor,
                 f"CREATE USER {quote_identifier(username)} IDENTIFIED BY {quote_identifier(password)}",
@@ -150,12 +168,21 @@ def main() -> int:
                 f"GRANT SELECT ON {VIEW_OWNER}.{VIEW_NAME} TO {quote_identifier(username)}",
                 f"GRANT SELECT ON {VIEW_OWNER}.{VIEW_NAME} TO {username}",
             )
+            cursor.execute(
+                """
+                INSERT INTO app.data_redaction_entitlements
+                    (principal_name, object_owner, object_name, column_name, unmask_level)
+                VALUES (:principal_name, 'APP', 'V_ORDER_TOTALS', 'STATUS', 'PARTIAL')
+                """,
+                principal_name=username,
+            )
+            entitlement_created = True
         admin_connection.commit()
         logger.info("Created %s and granted only CREATE SESSION and SELECT on %s.%s", username, VIEW_OWNER, VIEW_NAME)
 
         test_connection = oracledb.connect(user=username, password=password, dsn=settings.oracle_dsn)
         logger.info("Connected as temporary user %s", username)
-        verify_masked(test_connection)
+        verify_masked(test_connection, expected_status)
         logger.info("Oracle Data Redaction smoke test passed")
     except Exception:
         failed = True
@@ -171,6 +198,12 @@ def main() -> int:
         if admin_connection and user_created:
             try:
                 with admin_connection.cursor() as cursor:
+                    if entitlement_created:
+                        execute(
+                            cursor,
+                            f"DELETE FROM app.data_redaction_entitlements WHERE principal_name = '{username}'",
+                            f"DELETE temporary entitlement for {username}",
+                        )
                     execute(cursor, f"DROP USER {quote_identifier(username)}", f"DROP USER {username}")
                 admin_connection.commit()
                 logger.info("Dropped temporary user %s", username)
